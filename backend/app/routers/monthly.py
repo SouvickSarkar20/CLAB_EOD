@@ -74,9 +74,9 @@ async def get_monthly_summary_overview(
         month_str = str(month) if month else "202607"
         go_data = await GoServiceClient.get_dm_overview(
             month=month_str,
-            dm_name="",
-            district="",
-            station_id=""
+            dm=None,
+            district=None,
+            station_id=None
         )
         if go_data:
             top_stations = go_data.get("top_stations", [])

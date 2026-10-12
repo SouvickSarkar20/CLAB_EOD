@@ -100,10 +100,10 @@ async def require_mfa(
 async def require_dm(
     current_user: AdminUser = Depends(get_current_user)
 ) -> AdminUser:
-    """Ensure the current authenticated user has DM role."""
-    if current_user.role != UserRole.DISTRICT_MANAGER:
+    """Ensure the current authenticated user has DM or Admin role."""
+    if current_user.role not in [UserRole.DISTRICT_MANAGER, UserRole.ADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="District Manager access required for this operation",
+            detail="District Manager or Administrator access required for this operation",
         )
     return current_user

@@ -30,11 +30,12 @@ async def get_dm_overview(
     Fetch DM Dashboard Overview from Go database microservice (with fallback).
     Automatically scoped to the authenticated DM's district.
     """
-    month_str = str(month) if month else ""
+    month_str = str(month) if month else "202607"
+    dm_scope = current_dm.name if current_dm.role.value == "district_manager" else None
     try:
         data = await GoServiceClient.get_dm_overview(
             month=month_str,
-            dm=current_dm.name
+            dm=dm_scope
         )
         return DailySummaryResponse.model_validate(data)
     except Exception as e:
@@ -60,11 +61,12 @@ async def get_dm_daily_records(
     """
     Fetch Daily records from Go database microservice (with fallback).
     """
-    month_str = str(month) if month else ""
+    month_str = str(month) if month else "202607"
+    dm_scope = current_dm.name if current_dm.role.value == "district_manager" else None
     try:
         data = await GoServiceClient.get_daily_logs(
             month=month_str,
-            dm=current_dm.name,
+            dm=dm_scope,
             station_id=station_id,
             page=page,
             page_size=page_size
