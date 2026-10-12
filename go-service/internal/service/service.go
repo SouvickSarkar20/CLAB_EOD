@@ -284,120 +284,159 @@ func (s *DataService) GetDMOverview(ctx context.Context, month, dmName, district
 		CategoryMix: []models.CategoryMixItem{},
 	}
 
-	// 1. KPI Aggregation
-	kpiQuery := fmt.Sprintf(`
-		SELECT 
-			COUNT(*) as total_enrollment,
-			COALESCE(SUM(TRY_CAST(TOTAL_AMOUNT_CHARGED AS decimal(10,2))), 0) as total_revenue,
-			COUNT(DISTINCT EnrollDT) as active_days
-		FROM [%s]
-		%s
-	`, table, whereSQL)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 
-	err := s.pool.DB.QueryRowContext(ctx, kpiQuery, args...).Scan(
-		&resp.TotalEnrollment,
-		&resp.TotalRevenue,
-		&resp.ActiveDaysCount,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("error querying KPIs: %w", err)
-	}
+	// 1. KPI Aggregation
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		kpiQuery := fmt.Sprintf(`
+			SELECT 
+				COUNT(*) as total_enrollment,
+				COALESCE(SUM(TRY_CAST(TOTAL_AMOUNT_CHARGED AS decimal(10,2))), 0) as total_revenue,
+				COUNT(DISTINCT EnrollDT) as active_days
+			FROM [%s] WITH (NOLOCK)
+			%s
+		`, table, whereSQL)
+
+		var totalEnrollment, activeDays int
+		var totalRev float64
+		err := s.pool.DB.QueryRowContext(ctx, kpiQuery, args...).Scan(
+			&totalEnrollment,
+			&totalRev,
+			&activeDays,
+		)
+		if err == nil {
+			mu.Lock()
+			resp.TotalEnrollment = totalEnrollment
+			resp.TotalRevenue = totalRev
+			resp.ActiveDaysCount = activeDays
+			mu.Unlock()
+		}
+	}()
 
 	// 2. Daily Trend
-	trendQuery := fmt.Sprintf(`
-		SELECT 
-			EnrollDT,
-			COUNT(*) as daily_enrollment,
-			COALESCE(SUM(TRY_CAST(TOTAL_AMOUNT_CHARGED AS decimal(10,2))), 0) as daily_revenue
-		FROM [%s]
-		%s
-		GROUP BY EnrollDT
-		ORDER BY EnrollDT ASC
-	`, table, whereSQL)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		trendQuery := fmt.Sprintf(`
+			SELECT 
+				EnrollDT,
+				COUNT(*) as daily_enrollment,
+				COALESCE(SUM(TRY_CAST(TOTAL_AMOUNT_CHARGED AS decimal(10,2))), 0) as daily_revenue
+			FROM [%s] WITH (NOLOCK)
+			%s
+			GROUP BY EnrollDT
+			ORDER BY EnrollDT ASC
+		`, table, whereSQL)
 
-	trendRows, err := s.pool.DB.QueryContext(ctx, trendQuery, args...)
-	if err == nil {
-		defer trendRows.Close()
-		for trendRows.Next() {
-			var dt string
-			var count int
-			var rev float64
-			if err := trendRows.Scan(&dt, &count, &rev); err == nil {
-				label := dt
-				isoDate := dt
-				if len(dt) == 8 {
-					label = fmt.Sprintf("%s/%s", dt[6:8], dt[4:6]) // e.g. 03/07
-					isoDate = fmt.Sprintf("%s-%s-%s", dt[0:4], dt[4:6], dt[6:8]) // e.g. 2026-07-03
+		trendRows, err := s.pool.DB.QueryContext(ctx, trendQuery, args...)
+		if err == nil {
+			defer trendRows.Close()
+			var points []models.DailyTrendPoint
+			for trendRows.Next() {
+				var dt string
+				var count int
+				var rev float64
+				if err := trendRows.Scan(&dt, &count, &rev); err == nil {
+					label := dt
+					isoDate := dt
+					if len(dt) == 8 {
+						label = fmt.Sprintf("%s/%s", dt[6:8], dt[4:6]) // e.g. 03/07
+						isoDate = fmt.Sprintf("%s-%s-%s", dt[0:4], dt[4:6], dt[6:8]) // e.g. 2026-07-03
+					}
+					points = append(points, models.DailyTrendPoint{
+						EnrollDate:      isoDate,
+						Label:           label,
+						TotalEnrollment: count,
+						TotalRevenue:    rev,
+					})
 				}
-				resp.DailyTrend = append(resp.DailyTrend, models.DailyTrendPoint{
-					EnrollDate:      isoDate,
-					Label:           label,
-					TotalEnrollment: count,
-					TotalRevenue:    rev,
-				})
 			}
+			mu.Lock()
+			resp.DailyTrend = points
+			mu.Unlock()
 		}
-	}
+	}()
 
 	// 3. Category Mix
-	catQuery := fmt.Sprintf(`
-		SELECT 
-			COALESCE(UpdateType, 'Other') as cat,
-			COUNT(*) as count
-		FROM [%s]
-		%s
-		GROUP BY UpdateType
-		ORDER BY count DESC
-	`, table, whereSQL)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		catQuery := fmt.Sprintf(`
+			SELECT 
+				COALESCE(UpdateType, 'Other') as cat,
+				COUNT(*) as count
+			FROM [%s] WITH (NOLOCK)
+			%s
+			GROUP BY UpdateType
+			ORDER BY count DESC
+		`, table, whereSQL)
 
-	catRows, err := s.pool.DB.QueryContext(ctx, catQuery, args...)
-	if err == nil {
-		defer catRows.Close()
-		for catRows.Next() {
-			var cat string
-			var count int
-			if err := catRows.Scan(&cat, &count); err == nil {
-				resp.CategoryMix = append(resp.CategoryMix, models.CategoryMixItem{
-					Category: cat,
-					Count:    count,
-				})
+		catRows, err := s.pool.DB.QueryContext(ctx, catQuery, args...)
+		if err == nil {
+			defer catRows.Close()
+			var items []models.CategoryMixItem
+			for catRows.Next() {
+				var cat string
+				var count int
+				if err := catRows.Scan(&cat, &count); err == nil {
+					items = append(items, models.CategoryMixItem{
+						Category: cat,
+						Count:    count,
+					})
+				}
 			}
+			mu.Lock()
+			resp.CategoryMix = items
+			mu.Unlock()
 		}
-	}
+	}()
 
 	// 4. Top Performing Stations
-	topQuery := fmt.Sprintf(`
-		SELECT TOP 10
-			StationID,
-			COALESCE(MAX(District), 'N/A') as district,
-			COUNT(DISTINCT EnrollDT) as active_days,
-			COUNT(*) as total_enrollment,
-			COALESCE(SUM(TRY_CAST(TOTAL_AMOUNT_CHARGED AS decimal(10,2))), 0) as total_revenue
-		FROM [%s]
-		%s
-		GROUP BY StationID
-		ORDER BY total_enrollment DESC
-	`, table, whereSQL)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		topQuery := fmt.Sprintf(`
+			SELECT TOP 10
+				StationID,
+				COALESCE(MAX(District), 'N/A') as district,
+				COUNT(DISTINCT EnrollDT) as active_days,
+				COUNT(*) as total_enrollment,
+				COALESCE(SUM(TRY_CAST(TOTAL_AMOUNT_CHARGED AS decimal(10,2))), 0) as total_revenue
+			FROM [%s] WITH (NOLOCK)
+			%s
+			GROUP BY StationID
+			ORDER BY total_enrollment DESC
+		`, table, whereSQL)
 
-	topRows, err := s.pool.DB.QueryContext(ctx, topQuery, args...)
-	if err == nil {
-		defer topRows.Close()
-		for topRows.Next() {
-			var sid, dist string
-			var days, enrolls int
-			var rev float64
-			if err := topRows.Scan(&sid, &dist, &days, &enrolls, &rev); err == nil {
-				resp.TopStations = append(resp.TopStations, models.TopStationData{
-					StationID:       sid,
-					StationName:     "Station " + sid,
-					DistrictName:    dist,
-					ActiveDays:      days,
-					TotalEnrollment: enrolls,
-					TotalRevenue:    rev,
-				})
+		topRows, err := s.pool.DB.QueryContext(ctx, topQuery, args...)
+		if err == nil {
+			defer topRows.Close()
+			var topStations []models.TopStationData
+			for topRows.Next() {
+				var sid, dist string
+				var days, enrolls int
+				var rev float64
+				if err := topRows.Scan(&sid, &dist, &days, &enrolls, &rev); err == nil {
+					topStations = append(topStations, models.TopStationData{
+						StationID:       sid,
+						StationName:     "Station " + sid,
+						DistrictName:    dist,
+						ActiveDays:      days,
+						TotalEnrollment: enrolls,
+						TotalRevenue:    rev,
+					})
+				}
 			}
+			mu.Lock()
+			resp.TopStations = topStations
+			mu.Unlock()
 		}
-	}
+	}()
+
+	wg.Wait()
 
 	return resp, nil
 }
