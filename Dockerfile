@@ -5,12 +5,9 @@ FROM golang:1.24-alpine AS go-builder
 
 WORKDIR /build
 
-# Copy Go module manifests & download dependencies
-COPY go-service/go.mod go-service/go.sum ./
-RUN go mod download
-
-# Copy Go source code
+# Copy Go files and download dependencies
 COPY go-service/ ./
+RUN go mod download
 
 # Compile statically linked standalone Go binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /go-server ./cmd/server/main.go
