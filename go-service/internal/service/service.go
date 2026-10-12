@@ -482,20 +482,7 @@ func (s *DataService) GetDailyLogs(ctx context.Context, month, dmName, district,
 		whereSQL = " WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
-	// Total groups count
-	countQuery := fmt.Sprintf(`
-		SELECT COUNT(*) FROM (
-			SELECT StationID, EnrollDT, OperatorName
-			FROM [%s]
-			%s
-			GROUP BY StationID, EnrollDT, OperatorName
-		) as sub
-	`, table, whereSQL)
-
-	var totalCount int
-	_ = s.pool.DB.QueryRowContext(ctx, countQuery, args...).Scan(&totalCount)
-
-	// Rollup query
+	// Rollup query with WITH (NOLOCK)
 	rollupQuery := fmt.Sprintf(`
 		SELECT 
 			EnrollDT,
@@ -513,7 +500,7 @@ func (s *DataService) GetDailyLogs(ctx context.Context, month, dmName, district,
 			SUM(CASE WHEN UpdateType LIKE 'MBU%%100%%' THEN 1 ELSE 0 END) as mbu_100,
 			SUM(CASE WHEN UpdateType LIKE 'MBU%%125%%' THEN 1 ELSE 0 END) as mbu_125,
 			SUM(CASE WHEN TYPE = 'N' OR UpdateType LIKE 'NEW%%' THEN 1 ELSE 0 END) as new_0
-		FROM [%s]
+		FROM [%s] WITH (NOLOCK)
 		%s
 		GROUP BY EnrollDT, StationID, OperatorName
 		ORDER BY EnrollDT DESC, total_enrollment DESC
@@ -553,6 +540,13 @@ func (s *DataService) GetDailyLogs(ctx context.Context, month, dmName, district,
 			}
 			items = append(items, item)
 		}
+	}
+
+	totalCount := len(items)
+	if totalCount == pageSize {
+		totalCount = page * pageSize + 1
+	} else {
+		totalCount = (page - 1) * pageSize + len(items)
 	}
 
 	return &models.PaginatedDailyResponse{
