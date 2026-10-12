@@ -1,7 +1,7 @@
 # ==============================================================================
 # STAGE 1: Build the Go Microservice
 # ==============================================================================
-FROM golang:1.24-alpine AS go-builder
+FROM golang:alpine AS go-builder
 
 WORKDIR /build
 
