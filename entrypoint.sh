@@ -25,5 +25,5 @@ sleep 2
 
 # 3. Start Python FastAPI in the foreground
 echo "[LAUNCH] Starting Python FastAPI Gateway..."
-exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT}"
+exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT}" --access-log
 

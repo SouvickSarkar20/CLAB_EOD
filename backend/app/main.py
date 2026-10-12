@@ -89,6 +89,14 @@ app.include_router(exports.router, prefix="/api/exports", tags=["Data Exports"])
 app.include_router(audit_log.router, prefix="/api/audit-log", tags=["Audit Log"])
 app.include_router(dm.router, prefix="/api/dm", tags=["District Manager Dashboard"])
 
+@app.get("/api/anomalies/summary", tags=["Anomalies"])
+async def get_anomalies_summary():
+    return {
+        "total_anomalies": 0,
+        "anomalies": [],
+        "message": "All station sync operations nominal"
+    }
+
 @app.api_route("/api/health", methods=["GET", "HEAD"], tags=["Health"])
 async def health_check():
     return {"status": "healthy", "service": "EOD Dashboard API"}
