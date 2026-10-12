@@ -9,6 +9,7 @@ import {
   Download,
   Settings,
   Shield,
+  UploadCloud,
   X,
   ChevronRight
 } from 'lucide-react';
@@ -50,10 +51,19 @@ export function Sidebar() {
       end: false,
     },
     {
+      to: `${basePath}/upload`,
+      label: 'Upload Daily EOD',
+      icon: UploadCloud,
+      adminOnly: false,
+      dmOnly: true,
+      end: false,
+    },
+    {
       to: `${basePath}/reports`,
       label: 'Reports & Exports',
       icon: Download,
       adminOnly: false,
+      dmOnly: false,
       end: false,
     },
     {
@@ -61,6 +71,7 @@ export function Sidebar() {
       label: 'Settings & Security',
       icon: Settings,
       adminOnly: false,
+      dmOnly: false,
       end: false,
     },
   ];
@@ -87,6 +98,9 @@ export function Sidebar() {
           <nav className="flex-1 py-4 space-y-1 overflow-y-auto overflow-x-hidden">
             {navItems.map((item) => {
               if (item.adminOnly && user?.role !== 'admin') {
+                return null;
+              }
+              if ((item as any).dmOnly && user?.role === 'admin') {
                 return null;
               }
 

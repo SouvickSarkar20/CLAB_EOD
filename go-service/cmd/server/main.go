@@ -56,12 +56,13 @@ func main() {
 	mux.HandleFunc("/api/filters/options", h.GetFilterOptions)
 	mux.HandleFunc("/api/dm/overview", h.GetDMOverview)
 	mux.HandleFunc("/api/daily/logs", h.GetDailyLogs)
+	mux.HandleFunc("/api/records/bulk-insert", h.BulkInsert)
 
 	server := &http.Server{
 		Addr:         ":" + cfg.ServerPort,
 		Handler:      withMiddleware(mux),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 
@@ -69,6 +70,18 @@ func main() {
 		log.Printf("Go Microservice HTTP Server listening on http://0.0.0.0:%s", cfg.ServerPort)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
+		}
+	}()
+
+	// Pre-warm filter options cache in background so incoming requests are instant
+	go func() {
+		log.Println("[CACHE] Warming up filter options cache...")
+		warmCtx, warmCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer warmCancel()
+		if _, err := svc.GetFilterOptions(warmCtx, ""); err != nil {
+			log.Printf("[CACHE] Warm-up error: %v", err)
+		} else {
+			log.Println("[CACHE] Filter options cache successfully warmed up!")
 		}
 	}()
 

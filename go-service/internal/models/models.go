@@ -110,3 +110,46 @@ type HealthStatus struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+// RawEODRecord represents a single row from the uploaded TXT/CSV file
+type RawEODRecord struct {
+	SLNO                              string `json:"slno"`
+	EnrolmentNoDate                   string `json:"enrolment_no_date"`
+	AppointmentID                     string `json:"appointment_id"`
+	Type                              string `json:"type"`
+	MandatoryBioMetricUpdateOnly      string `json:"mandatory_bio_metric_update_only"`
+	IsNRI                             string `json:"is_nri"`
+	TinNo                             string `json:"tin_no"`
+	OperatorID                        string `json:"operator_id"`
+	Introducer                        string `json:"introducer"`
+	Proof                             string `json:"proof"`
+	ResidentName                      string `json:"resident_name"`
+	Status                            string `json:"status"`
+	GstAmount                         string `json:"gst_amount"`
+	AmountChargedForNewEnrolment      string `json:"amount_charged_for_new_enrolment"`
+	AmountChargedForUpdateEnrolment   string `json:"amount_charged_for_update_enrolment"`
+	TotalAmountCharged                string `json:"total_amount_charged"`
+	ProcessingStateDescription        string `json:"processing_state_description"`
+	RejectReasonDescription           string `json:"reject_reason_description"`
+	PacketSkipped                     string `json:"packet_skipped"`
+	ForeignResident                   string `json:"foreign_resident"`
+	StationID                         string `json:"station_id"`
+	EnrollDT                          string `json:"enroll_dt"`
+	EnrollMth                         string `json:"enroll_mth"`
+	UpdateType                        string `json:"update_type"`
+	DistrictManger                    string `json:"district_manager"`
+	District                          string `json:"district"`
+	OperatorName                      string `json:"operator_name"`
+	StationType                       string `json:"station_type"`
+}
+
+type BulkInsertRequest struct {
+	Records []RawEODRecord `json:"records"`
+}
+
+type BulkInsertResponse struct {
+	Success       bool   `json:"success"`
+	InsertedCount int    `json:"inserted_count"`
+	SkippedCount  int    `json:"skipped_count"`
+	Message       string `json:"message"`
+}
+

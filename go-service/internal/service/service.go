@@ -5,10 +5,27 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"go-service/internal/db"
 	"go-service/internal/models"
 )
+
+// filterCache caches the expensive GetFilterOptions result in memory
+type filterCacheEntry struct {
+	data      *models.FilterOptions
+	expiresAt time.Time
+}
+
+type filterCache struct {
+	mu      sync.RWMutex
+	entries map[string]filterCacheEntry
+}
+
+var globalFilterCache = &filterCache{
+	entries: make(map[string]filterCacheEntry),
+}
 
 type DataService struct {
 	pool *db.Pool
@@ -81,79 +98,155 @@ func (s *DataService) ListUsers(ctx context.Context) ([]models.UserResponse, err
 // ----------------- FILTERS -----------------
 
 func (s *DataService) GetFilterOptions(ctx context.Context, dmName string) (*models.FilterOptions, error) {
+	globalFilterCache.mu.RLock()
+	entry, found := globalFilterCache.entries[dmName]
+	if found && time.Now().Before(entry.expiresAt) {
+		globalFilterCache.mu.RUnlock()
+		return entry.data, nil
+	}
+	globalFilterCache.mu.RUnlock()
+
 	opts := &models.FilterOptions{
-		Months:    []string{"202607"},
+		Months:    []string{},
 		Districts: []string{},
 		DMs:       []models.DMOption{},
 		Stations:  []string{},
 	}
 
-	// Distinct Districts
-	distQuery := "SELECT DISTINCT District FROM WorkingKIT WHERE District IS NOT NULL AND LTRIM(RTRIM(District)) <> ''"
-	var distArgs []any
-	if dmName != "" {
-		distQuery += " AND DistrictManger = @dmName"
-		distArgs = append(distArgs, sql.Named("dmName", dmName))
-	}
-	distQuery += " ORDER BY District"
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 
-	dRows, err := s.pool.DB.QueryContext(ctx, distQuery, distArgs...)
-	if err == nil {
-		defer dRows.Close()
-		for dRows.Next() {
-			var d string
-			if err := dRows.Scan(&d); err == nil {
-				opts.Districts = append(opts.Districts, d)
+	// ------ 1. Months (EODFiles + static 202607) ------
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		monthQuery := `SELECT DISTINCT EnrollMth FROM EODFiles WITH (NOLOCK) WHERE EnrollMth IS NOT NULL AND LTRIM(RTRIM(EnrollMth)) <> ''`
+		foundMonths := map[string]bool{"202607": true}
+		mRows, err := s.pool.DB.QueryContext(ctx, monthQuery)
+		if err == nil {
+			defer mRows.Close()
+			for mRows.Next() {
+				var m string
+				if err := mRows.Scan(&m); err == nil && m != "" {
+					foundMonths[m] = true
+				}
 			}
 		}
-	}
-
-	// Distinct DMs from WorkingKIT and EODDB_Users
-	dmQuery := `
-		SELECT DISTINCT
-			COALESCE(u.Id, d.DistrictManger) as id,
-			d.DistrictManger as name
-		FROM (
-			SELECT DistrictManger FROM WorkingKIT WHERE DistrictManger IS NOT NULL AND LTRIM(RTRIM(DistrictManger)) <> ''
-			UNION
-			SELECT DistrictManager FROM EODDB_Users WHERE DistrictManager IS NOT NULL AND LTRIM(RTRIM(DistrictManager)) <> ''
-		) d
-		LEFT JOIN EODDB_Users u ON d.DistrictManger = u.DistrictManager
-		ORDER BY name
-	`
-	dmRows, err := s.pool.DB.QueryContext(ctx, dmQuery)
-	if err == nil {
-		defer dmRows.Close()
-		for dmRows.Next() {
-			var id, name string
-			if err := dmRows.Scan(&id, &name); err == nil {
-				opts.DMs = append(opts.DMs, models.DMOption{ID: id, Name: name})
+		months := make([]string, 0, len(foundMonths))
+		for m := range foundMonths {
+			months = append(months, m)
+		}
+		// Sort descending
+		for i := 0; i < len(months)-1; i++ {
+			for j := i + 1; j < len(months); j++ {
+				if months[i] < months[j] {
+					months[i], months[j] = months[j], months[i]
+				}
 			}
 		}
-	}
+		mu.Lock()
+		opts.Months = months
+		mu.Unlock()
+	}()
 
-	// Distinct Stations
-	stnQuery := "SELECT DISTINCT StationID FROM WorkingKIT WHERE StationID IS NOT NULL AND LTRIM(RTRIM(StationID)) <> ''"
-	var stnArgs []any
-	if dmName != "" {
-		stnQuery += " AND DistrictManger = @dmName"
-		stnArgs = append(stnArgs, sql.Named("dmName", dmName))
-	}
-	stnQuery += " ORDER BY StationID"
-
-	stnRows, err := s.pool.DB.QueryContext(ctx, stnQuery, stnArgs...)
-	if err == nil {
-		defer stnRows.Close()
-		for stnRows.Next() {
-			var sid string
-			if err := stnRows.Scan(&sid); err == nil {
-				opts.Stations = append(opts.Stations, sid)
-			}
+	// ------ 2. Districts ------
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		distQuery := "SELECT DISTINCT District FROM WorkingKIT WITH (NOLOCK) WHERE District IS NOT NULL AND LTRIM(RTRIM(District)) <> ''"
+		var distArgs []any
+		if dmName != "" {
+			distQuery += " AND DistrictManger = @dmName"
+			distArgs = append(distArgs, sql.Named("dmName", dmName))
 		}
+		distQuery += " ORDER BY District"
+		dRows, err := s.pool.DB.QueryContext(ctx, distQuery, distArgs...)
+		if err == nil {
+			defer dRows.Close()
+			var dists []string
+			for dRows.Next() {
+				var d string
+				if err := dRows.Scan(&d); err == nil {
+					dists = append(dists, d)
+				}
+			}
+			mu.Lock()
+			opts.Districts = dists
+			mu.Unlock()
+		}
+	}()
+
+	// ------ 3. DMs ------
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		dmQuery := `
+			SELECT DISTINCT
+				COALESCE(u.Id, d.DistrictManger) as id,
+				d.DistrictManger as name
+			FROM (
+				SELECT DistrictManger FROM WorkingKIT WITH (NOLOCK) WHERE DistrictManger IS NOT NULL AND LTRIM(RTRIM(DistrictManger)) <> ''
+				UNION
+				SELECT DistrictManager FROM EODDB_Users WITH (NOLOCK) WHERE DistrictManager IS NOT NULL AND LTRIM(RTRIM(DistrictManager)) <> ''
+			) d
+			LEFT JOIN EODDB_Users u WITH (NOLOCK) ON d.DistrictManger = u.DistrictManager
+			ORDER BY name
+		`
+		dmRows, err := s.pool.DB.QueryContext(ctx, dmQuery)
+		if err == nil {
+			defer dmRows.Close()
+			var dms []models.DMOption
+			for dmRows.Next() {
+				var id, name string
+				if err := dmRows.Scan(&id, &name); err == nil {
+					dms = append(dms, models.DMOption{ID: id, Name: name})
+				}
+			}
+			mu.Lock()
+			opts.DMs = dms
+			mu.Unlock()
+		}
+	}()
+
+	// ------ 4. Stations ------
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		stnQuery := "SELECT DISTINCT StationID FROM WorkingKIT WITH (NOLOCK) WHERE StationID IS NOT NULL AND LTRIM(RTRIM(StationID)) <> ''"
+		var stnArgs []any
+		if dmName != "" {
+			stnQuery += " AND DistrictManger = @dmName"
+			stnArgs = append(stnArgs, sql.Named("dmName", dmName))
+		}
+		stnQuery += " ORDER BY StationID"
+		stnRows, err := s.pool.DB.QueryContext(ctx, stnQuery, stnArgs...)
+		if err == nil {
+			defer stnRows.Close()
+			var stns []string
+			for stnRows.Next() {
+				var sid string
+				if err := stnRows.Scan(&sid); err == nil {
+					stns = append(stns, sid)
+				}
+			}
+			mu.Lock()
+			opts.Stations = stns
+			mu.Unlock()
+		}
+	}()
+
+	wg.Wait()
+
+	globalFilterCache.mu.Lock()
+	globalFilterCache.entries[dmName] = filterCacheEntry{
+		data:      opts,
+		expiresAt: time.Now().Add(10 * time.Minute),
 	}
+	globalFilterCache.mu.Unlock()
 
 	return opts, nil
 }
+
 
 // ----------------- DM OVERVIEW & ANALYTICS -----------------
 
@@ -163,6 +256,10 @@ func (s *DataService) GetDMOverview(ctx context.Context, month, dmName, district
 	var whereClauses []string
 	var args []any
 
+	if month != "" && month != "all" {
+		whereClauses = append(whereClauses, "EnrollMth = @month")
+		args = append(args, sql.Named("month", month))
+	}
 	if dmName != "" {
 		whereClauses = append(whereClauses, "DistrictManger = @dmName")
 		args = append(args, sql.Named("dmName", dmName))
@@ -320,6 +417,10 @@ func (s *DataService) GetDailyLogs(ctx context.Context, month, dmName, district,
 	var whereClauses []string
 	var args []any
 
+	if month != "" && month != "all" {
+		whereClauses = append(whereClauses, "EnrollMth = @month")
+		args = append(args, sql.Named("month", month))
+	}
 	if dmName != "" {
 		whereClauses = append(whereClauses, "DistrictManger = @dmName")
 		args = append(args, sql.Named("dmName", dmName))
@@ -420,5 +521,95 @@ func (s *DataService) GetDailyLogs(ctx context.Context, month, dmName, district,
 		TotalCount: totalCount,
 		Page:       page,
 		PageSize:   pageSize,
+	}, nil
+}
+
+// BulkInsertRecords inserts an array of RawEODRecord rows into EODFiles
+func (s *DataService) BulkInsertRecords(ctx context.Context, records []models.RawEODRecord) (*models.BulkInsertResponse, error) {
+	if len(records) == 0 {
+		return &models.BulkInsertResponse{
+			Success:       true,
+			InsertedCount: 0,
+			Message:       "No records to insert",
+		}, nil
+	}
+
+	tx, err := s.pool.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	insertSQL := `
+		INSERT INTO EODFiles (
+			SLNO, ENROLMENT_NO_DATE, APPOINTMENT_ID, TYPE, MANDATORY_BIO_METRIC_UPDATE_ONLY,
+			IS_NRI, TIN_NO, OPERATOR_ID, INTRODUCER, PROOF, RESIDENT_NAME, STATUS,
+			GST_AMOUNT, AMOUNT_CHARGED_FOR_NEW_ENROLMENT, AMOUNT_CHARGED_FOR_UPDATE_ENROLMENT,
+			TOTAL_AMOUNT_CHARGED, PROCESSING_STATE_DESCRIPTION, REJECT_REASON_DESCRIPTION,
+			PACKET_SKIPPED, FOREIGN_RESIDENT, StationID, EnrollDT, EnrollMth, UpdateType,
+			DistrictManger, District, OperatorName, StationType
+		) VALUES (
+			@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10, @p11, @p12,
+			@p13, @p14, @p15, @p16, @p17, @p18, @p19, @p20, @p21, @p22, @p23,
+			@p24, @p25, @p26, @p27, @p28
+		)
+	`
+	stmt, err := tx.PrepareContext(ctx, insertSQL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare insert statement: %w", err)
+	}
+	defer stmt.Close()
+
+	insertedCount := 0
+	for _, r := range records {
+		_, err := stmt.ExecContext(ctx,
+			r.SLNO,
+			r.EnrolmentNoDate,
+			r.AppointmentID,
+			r.Type,
+			r.MandatoryBioMetricUpdateOnly,
+			r.IsNRI,
+			r.TinNo,
+			r.OperatorID,
+			r.Introducer,
+			r.Proof,
+			r.ResidentName,
+			r.Status,
+			r.GstAmount,
+			r.AmountChargedForNewEnrolment,
+			r.AmountChargedForUpdateEnrolment,
+			r.TotalAmountCharged,
+			r.ProcessingStateDescription,
+			r.RejectReasonDescription,
+			r.PacketSkipped,
+			r.ForeignResident,
+			r.StationID,
+			r.EnrollDT,
+			r.EnrollMth,
+			r.UpdateType,
+			r.DistrictManger,
+			r.District,
+			r.OperatorName,
+			r.StationType,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed inserting record %s: %w", r.EnrolmentNoDate, err)
+		}
+		insertedCount++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Invalidate filter cache so newly inserted month appears immediately
+	globalFilterCache.mu.Lock()
+	globalFilterCache.entries = make(map[string]filterCacheEntry)
+	globalFilterCache.mu.Unlock()
+
+	return &models.BulkInsertResponse{
+		Success:       true,
+		InsertedCount: insertedCount,
+		Message:       fmt.Sprintf("Successfully inserted %d records into database", insertedCount),
 	}, nil
 }

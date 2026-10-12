@@ -35,7 +35,7 @@ class GoServiceClient:
         params = {}
         if dm:
             params["dm"] = dm
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=90.0) as client:
             resp = await client.get(f"{cls.base_url()}/api/filters/options", params=params)
             resp.raise_for_status()
             return resp.json()
@@ -55,7 +55,7 @@ class GoServiceClient:
             params["district"] = district
         if station_id:
             params["station_id"] = station_id
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=90.0) as client:
             resp = await client.get(f"{cls.base_url()}/api/dm/overview", params=params)
             resp.raise_for_status()
             return resp.json()
@@ -86,6 +86,16 @@ class GoServiceClient:
             params["date"] = date
         async with httpx.AsyncClient(timeout=25.0) as client:
             resp = await client.get(f"{cls.base_url()}/api/daily/logs", params=params)
+            resp.raise_for_status()
+            return resp.json()
+
+    @classmethod
+    async def bulk_insert_records(cls, records: List[Dict[str, Any]]) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{cls.base_url()}/api/records/bulk-insert",
+                json={"records": records}
+            )
             resp.raise_for_status()
             return resp.json()
 

@@ -38,15 +38,29 @@ async def get_filter_options(
             StationOption(station_id=s, station_name=f"Station {s}")
             for s in go_data.get("stations", [])
         ]
+        raw_months = go_data.get("months", [])
+        avail_months = []
+        for m in raw_months:
+            try:
+                avail_months.append(int(m))
+            except (ValueError, TypeError):
+                continue
+        if not avail_months:
+            avail_months = [202607]
+
+        selected_m = month if month in avail_months else (avail_months[0] if avail_months else 202607)
+
         return FilterOptionsResponse(
-            available_months=[202607],
-            selected_month=month or 202607,
+            available_months=avail_months,
+            selected_month=selected_m,
             districts=dists,
             district_managers=dms,
             stations=stations,
             operators=[]
         )
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.error(f"[FILTERS] Error contacting Go microservice: {e}", exc_info=True)
         resolved_dm_uuid = await AnalyticsService.resolve_dm_uuid(db, dm_id)
         return await AnalyticsService.get_cascading_filter_options(
             db=db,

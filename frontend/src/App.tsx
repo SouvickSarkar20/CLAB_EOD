@@ -21,6 +21,7 @@ function RootRedirect() {
 
 import { AdminOverview } from './pages/AdminOverview';
 import { DMOverview } from './pages/DMOverview';
+import { DMUpload } from './pages/DMUpload';
 import { Reports } from './pages/Reports';
 import { Settings } from './pages/Settings';
 
@@ -83,6 +84,7 @@ export function App() {
           }
         >
           <Route index element={<DMOverview />} />
+          <Route path="upload" element={<DMUpload />} />
           <Route path="monthly" element={<MonthlyAnalysis />} />
           <Route path="daily" element={<DailyAnalysis />} />
           <Route path="reports" element={<Reports />} />

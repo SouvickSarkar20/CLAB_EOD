@@ -84,9 +84,18 @@ export function DMOverview() {
             District ID: <span className="font-mono text-[#0F1729] font-medium">{user?.dmid || 'N/A'}</span> &bull; Operations summary
           </p>
         </div>
-        <div className="flex items-center space-x-2 text-[#16A34A] px-3 py-1.5 rounded-[4px] border border-[#16A34A]/20 bg-[#16A34A]/5">
-          <ShieldCheck className="w-4 h-4" />
-          <span className="font-semibold text-[13px]">District Operational</span>
+        <div className="flex items-center space-x-3">
+          <Link
+            to="/dm/dashboard/upload"
+            className="flex items-center space-x-2 bg-[#1A3A8F] hover:bg-[#152e72] text-white px-4 py-2 rounded-[6px] text-[13px] font-semibold transition shadow-sm"
+          >
+            <UploadCloud className="w-4 h-4" />
+            <span>Upload Daily EOD</span>
+          </Link>
+          <div className="flex items-center space-x-2 text-[#16A34A] px-3 py-1.5 rounded-[4px] border border-[#16A34A]/20 bg-[#16A34A]/5">
+            <ShieldCheck className="w-4 h-4" />
+            <span className="font-semibold text-[13px]">District Operational</span>
+          </div>
         </div>
       </div>
 
