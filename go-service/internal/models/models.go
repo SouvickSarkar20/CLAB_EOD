@@ -153,3 +153,22 @@ type BulkInsertResponse struct {
 	Message       string `json:"message"`
 }
 
+// Station Assignment Request & Response
+type AssignStationsRequest struct {
+	DMName     string   `json:"dm_name"`
+	StationIDs []string `json:"station_ids"`
+}
+
+type AssignStationsResponse struct {
+	Success       bool   `json:"success"`
+	UpdatedCount  int    `json:"updated_count"`
+	Message       string `json:"message"`
+}
+
+type DMStationItem struct {
+	StationID    string `json:"station_id"`
+	DistrictName string `json:"district_name"`
+	StationType  string `json:"station_type"`
+}
+
+

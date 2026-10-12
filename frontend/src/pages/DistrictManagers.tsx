@@ -222,7 +222,7 @@ export function DistrictManagers() {
   };
 
   // Open Edit Modal
-  const openEditModal = (dm: DMListItem) => {
+  const openEditModal = async (dm: DMListItem) => {
     setSelectedDmForEdit(dm);
     setFormName(dm.name);
     setFormEmail(dm.email);
@@ -231,6 +231,17 @@ export function DistrictManagers() {
     setFormStationIds([]);
     setFormError(null);
     setIsEditModalOpen(true);
+
+    // Pre-populate with currently assigned stations from Azure SQL WorkingKIT
+    try {
+      const res = await api.get(`/api/district-managers/${dm.id}`);
+      if (res.data?.assigned_stations) {
+        const currentIds = res.data.assigned_stations.map((s: any) => s.station_id);
+        setFormStationIds(currentIds);
+      }
+    } catch (err) {
+      console.warn("Could not load current DM station assignments", err);
+    }
   };
 
   // Submit Edit DM
@@ -245,12 +256,10 @@ export function DistrictManagers() {
         name: formName.trim(),
         email: formEmail.trim(),
         status: formStatus,
+        station_ids: formStationIds, // Always send the updated list of stations
       };
       if (formDistrictIds.length > 0) {
         payload.district_ids = formDistrictIds;
-      }
-      if (formStationIds.length > 0) {
-        payload.station_ids = formStationIds;
       }
 
       await api.put(`/api/district-managers/${selectedDmForEdit.id}`, payload);
@@ -828,25 +837,64 @@ export function DistrictManagers() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold uppercase text-[#0F1729] mb-1">
-                  Assign Supervised Stations
-                </label>
-                <select
-                  multiple
-                  value={formStationIds}
-                  onChange={(e) => {
-                    const selected = Array.from(e.target.selectedOptions, option => option.value);
-                    setFormStationIds(selected);
-                  }}
-                  className="w-full px-3.5 py-2 border border-slate-300 rounded-lg text-[#0F1729] focus:outline-none focus:ring-2 focus:ring-blue-900 h-24"
-                >
-                  {stationOptions.map((st) => (
-                    <option key={st.station_id} value={st.station_id}>
-                      {st.station_name || st.station_id}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[10px] text-slate-500 mt-1">Hold Ctrl (Windows) or Cmd (Mac) to select multiple.</p>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold uppercase text-[#0F1729]">
+                    Assign Supervised Stations ({formStationIds.length} Selected)
+                  </label>
+                  <div className="flex items-center space-x-2 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setFormStationIds(stationOptions.map(s => s.station_id))}
+                      className="text-blue-700 hover:underline font-semibold cursor-pointer"
+                    >
+                      Select All
+                    </button>
+                    <span className="text-slate-300">|</span>
+                    <button
+                      type="button"
+                      onClick={() => setFormStationIds([])}
+                      className="text-red-600 hover:underline font-semibold cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+
+                <div className="border border-slate-300 rounded-lg max-h-40 overflow-y-auto p-2 bg-slate-50 space-y-1">
+                  {stationOptions.length === 0 ? (
+                    <div className="text-center py-4 text-xs text-slate-400">Loading stations...</div>
+                  ) : (
+                    stationOptions.map((st) => {
+                      const isSelected = formStationIds.includes(st.station_id);
+                      return (
+                        <label
+                          key={st.station_id}
+                          className={`flex items-center space-x-2.5 px-2.5 py-1.5 rounded-md text-xs cursor-pointer transition select-none ${
+                            isSelected
+                              ? 'bg-blue-100 text-blue-900 font-bold border border-blue-200'
+                              : 'bg-white hover:bg-slate-100 text-slate-700 border border-transparent'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setFormStationIds((prev) => [...prev, st.station_id]);
+                              } else {
+                                setFormStationIds((prev) => prev.filter((id) => id !== st.station_id));
+                              }
+                            }}
+                            className="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                          />
+                          <span className="font-mono">{st.station_id}</span>
+                          <span className="text-slate-500 font-normal">({st.station_name || `Station ${st.station_id}`})</span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">Click any station to assign or unassign it for this District Manager in Azure SQL.</p>
               </div>
 
               <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100">

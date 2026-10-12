@@ -57,6 +57,8 @@ func main() {
 	mux.HandleFunc("/api/dm/overview", h.GetDMOverview)
 	mux.HandleFunc("/api/daily/logs", h.GetDailyLogs)
 	mux.HandleFunc("/api/records/bulk-insert", h.BulkInsert)
+	mux.HandleFunc("/api/admin/assign-stations", h.AssignStations)
+	mux.HandleFunc("/api/dm/stations", h.GetDMStations)
 
 	server := &http.Server{
 		Addr:         ":" + cfg.ServerPort,

@@ -84,3 +84,4 @@ func main() {
 		log.Fatalf("\n>>> VERIFICATION FAILED: Some rows were not deleted! <<<")
 	}
 }
+

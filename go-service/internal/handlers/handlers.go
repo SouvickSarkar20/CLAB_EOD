@@ -152,3 +152,52 @@ func (h *APIHandler) BulkInsert(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// AssignStations handles assigning stations to a DM in WorkingKIT
+func (h *APIHandler) AssignStations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	var req models.AssignStationsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid JSON body: "+err.Error())
+		return
+	}
+
+	resp, err := h.svc.AssignStations(r.Context(), req.DMName, req.StationIDs)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// GetDMStations returns currently assigned stations for a DM from WorkingKIT
+func (h *APIHandler) GetDMStations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	dmName := r.URL.Query().Get("dm")
+	if dmName == "" {
+		writeError(w, http.StatusBadRequest, "Query parameter 'dm' is required")
+		return
+	}
+
+	items, err := h.svc.GetStationsByDM(r.Context(), dmName)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"dm":       dmName,
+		"stations": items,
+		"count":    len(items),
+	})
+}
+
+

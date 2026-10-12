@@ -652,3 +652,90 @@ func (s *DataService) BulkInsertRecords(ctx context.Context, records []models.Ra
 		Message:       fmt.Sprintf("Successfully inserted %d records into database", insertedCount),
 	}, nil
 }
+
+// AssignStations updates the DistrictManger column in WorkingKIT for the specified station IDs
+func (s *DataService) AssignStations(ctx context.Context, dmName string, stationIDs []string) (*models.AssignStationsResponse, error) {
+	if dmName == "" {
+		return nil, fmt.Errorf("dm_name cannot be empty")
+	}
+
+	tx, err := s.pool.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 1. Unassign all stations currently assigned to this DM
+	unassignSQL := `UPDATE WorkingKIT SET DistrictManger = NULL WHERE DistrictManger = @dmName`
+	_, err = tx.ExecContext(ctx, unassignSQL, sql.Named("dmName", dmName))
+	if err != nil {
+		return nil, fmt.Errorf("failed to clear previous station assignments: %w", err)
+	}
+
+	// 2. Assign the new list of stations to this DM
+	assignedCount := 0
+	if len(stationIDs) > 0 {
+		stmt, err := tx.PrepareContext(ctx, `UPDATE WorkingKIT SET DistrictManger = @dmName WHERE StationID = @stnID`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to prepare assignment statement: %w", err)
+		}
+		defer stmt.Close()
+
+		for _, sid := range stationIDs {
+			sidTrimmed := strings.TrimSpace(sid)
+			if sidTrimmed == "" {
+				continue
+			}
+			res, err := stmt.ExecContext(ctx, sql.Named("dmName", dmName), sql.Named("stnID", sidTrimmed))
+			if err != nil {
+				return nil, fmt.Errorf("failed assigning station %s: %w", sidTrimmed, err)
+			}
+			if rowsAff, _ := res.RowsAffected(); rowsAff > 0 {
+				assignedCount += int(rowsAff)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Invalidate filter cache so dropdowns and overviews immediately reflect the new assignments
+	globalFilterCache.mu.Lock()
+	globalFilterCache.entries = make(map[string]filterCacheEntry)
+	globalFilterCache.mu.Unlock()
+
+	return &models.AssignStationsResponse{
+		Success:      true,
+		UpdatedCount: assignedCount,
+		Message:      fmt.Sprintf("Successfully assigned %d stations to %s", assignedCount, dmName),
+	}, nil
+}
+
+// GetStationsByDM returns all stations currently assigned to a given DM in WorkingKIT
+func (s *DataService) GetStationsByDM(ctx context.Context, dmName string) ([]models.DMStationItem, error) {
+	query := `
+		SELECT 
+			StationID, 
+			COALESCE(District, 'N/A') as district,
+			COALESCE(StationType, 'Standard') as station_type
+		FROM WorkingKIT WITH (NOLOCK)
+		WHERE DistrictManger = @dmName
+		ORDER BY StationID
+	`
+	rows, err := s.pool.DB.QueryContext(ctx, query, sql.Named("dmName", dmName))
+	if err != nil {
+		return nil, fmt.Errorf("failed querying stations for DM: %w", err)
+	}
+	defer rows.Close()
+
+	items := []models.DMStationItem{}
+	for rows.Next() {
+		var item models.DMStationItem
+		if err := rows.Scan(&item.StationID, &item.DistrictName, &item.StationType); err == nil {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+

@@ -132,4 +132,24 @@ class GoServiceClient:
         resp.raise_for_status()
         return resp.json()
 
+    @classmethod
+    async def assign_stations(cls, dm_name: str, station_ids: List[str]) -> Dict[str, Any]:
+        """Assigns stations to a DM directly in Azure SQL WorkingKIT."""
+        client = cls.get_client()
+        resp = await client.post(
+            "/api/admin/assign-stations",
+            json={"dm_name": dm_name, "station_ids": station_ids}
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    @classmethod
+    async def get_dm_stations(cls, dm_name: str) -> Dict[str, Any]:
+        """Fetches all stations assigned to a DM from Azure SQL WorkingKIT."""
+        client = cls.get_client()
+        resp = await client.get("/api/dm/stations", params={"dm": dm_name})
+        resp.raise_for_status()
+        return resp.json()
+
+
 

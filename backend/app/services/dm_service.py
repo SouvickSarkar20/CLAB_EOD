@@ -14,6 +14,7 @@ from app.utils.security import get_password_hash
 from app.schemas.district_manager import (
     CreateDMRequest, UpdateDMRequest, DMListItem, DMDetail, DMStationAssignmentSchema
 )
+from app.services.go_client import GoServiceClient
 
 def generate_temp_password(length: int = 12) -> str:
     """Generate a secure temporary password."""
@@ -64,7 +65,18 @@ class DMService:
 
         dm_ids = [dm.id for dm in dms]
         asgn_map = {}
-        if dm_ids:
+        # Fetch station counts directly from Azure SQL WorkingKIT via Go
+        for dm in dms:
+            try:
+                st_data = await GoServiceClient.get_dm_stations(dm.name)
+                stations_list = st_data.get("stations", [])
+                st_cnt = len(stations_list)
+                dist_names = sorted(list(set(s.get("district_name") for s in stations_list if s.get("district_name"))))
+                asgn_map[dm.id] = (st_cnt, dist_names)
+            except Exception:
+                pass
+
+        if not asgn_map and dm_ids:
             batch_query = (
                 select(
                     StationAssignment.dm_user_id,
@@ -111,40 +123,57 @@ class DMService:
         if not dm:
             return None
 
-        asgn_stmt = (
-            select(
-                StationAssignment.station_id,
-                Station.station_name,
-                StationAssignment.district_id,
-                District.district_name,
-                StationAssignment.effective_month
-            )
-            .select_from(StationAssignment)
-            .join(Station, StationAssignment.station_id == Station.station_id, isouter=True)
-            .join(District, StationAssignment.district_id == District.district_id, isouter=True)
-            .where(StationAssignment.dm_user_id == dm.id)
-            .order_by(StationAssignment.effective_month.desc())
-        )
-        asgn_rows = (await db.execute(asgn_stmt)).all()
-
+        # 1. Fetch real assigned stations from Azure SQL WorkingKIT via Go
         assignments = []
         districts_set = set()
-        seen_stations = set()
-        for r in asgn_rows:
-            if r[0] in seen_stations:
-                continue
-            seen_stations.add(r[0])
-            dist_name = r[3] or "Unknown"
-            districts_set.add(dist_name)
-            assignments.append(
-                DMStationAssignmentSchema(
-                    station_id=r[0],
-                    station_name=r[1] or f"Station {r[0]}",
-                    district_id=r[2],
-                    district_name=dist_name,
-                    effective_month=r[4]
+        try:
+            go_res = await GoServiceClient.get_dm_stations(dm.name)
+            for item in go_res.get("stations", []):
+                sid = item["station_id"]
+                dist = item.get("district_name") or "Unknown"
+                districts_set.add(dist)
+                assignments.append(
+                    DMStationAssignmentSchema(
+                        station_id=sid,
+                        station_name=f"Station {sid}",
+                        district_id=1,
+                        district_name=dist,
+                        effective_month=202609
+                    )
                 )
+        except Exception:
+            # Fallback to local DB if Go engine is unreachable
+            asgn_stmt = (
+                select(
+                    StationAssignment.station_id,
+                    Station.station_name,
+                    StationAssignment.district_id,
+                    District.district_name,
+                    StationAssignment.effective_month
+                )
+                .select_from(StationAssignment)
+                .join(Station, StationAssignment.station_id == Station.station_id, isouter=True)
+                .join(District, StationAssignment.district_id == District.district_id, isouter=True)
+                .where(StationAssignment.dm_user_id == dm.id)
+                .order_by(StationAssignment.effective_month.desc())
             )
+            asgn_rows = (await db.execute(asgn_stmt)).all()
+            seen_stations = set()
+            for r in asgn_rows:
+                if r[0] in seen_stations:
+                    continue
+                seen_stations.add(r[0])
+                dist_name = r[3] or "Unknown"
+                districts_set.add(dist_name)
+                assignments.append(
+                    DMStationAssignmentSchema(
+                        station_id=r[0],
+                        station_name=r[1] or f"Station {r[0]}",
+                        district_id=r[2],
+                        district_name=dist_name,
+                        effective_month=r[4]
+                    )
+                )
 
         return DMDetail(
             id=dm.id,
@@ -293,12 +322,12 @@ class DMService:
 
         if payload.station_ids is not None:
             diffs["station_ids"] = payload.station_ids
-            if payload.station_ids:
-                await db.execute(
-                    update(StationAssignment)
-                    .where(StationAssignment.station_id.in_(payload.station_ids))
-                    .values(dm_user_id=dm.id)
-                )
+            # Assign stations directly in Azure SQL WorkingKIT via Go Data Engine
+            try:
+                await GoServiceClient.assign_stations(dm.name, payload.station_ids)
+            except Exception as e:
+                import logging
+                logging.error(f"[ASSIGN_STATIONS] Failed to assign stations in Azure SQL WorkingKIT: {e}", exc_info=True)
 
         if diffs:
             log = AuditLog(
