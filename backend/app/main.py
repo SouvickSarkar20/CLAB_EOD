@@ -20,29 +20,32 @@ async def lifespan(app: FastAPI):
     GoServiceClient.get_client()
 
     # If running with SQLite, ensure tables and initial admin user exist
-    if "sqlite" in settings.DATABASE_URL.lower():
-        from app.database import engine, Base, AsyncSessionLocal
-        from app.models import AdminUser, UserRole, UserStatus
-        from app.utils.security import get_password_hash
-        from sqlalchemy import select
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    try:
+        if "sqlite" in settings.DATABASE_URL.lower():
+            from app.database import engine, Base, AsyncSessionLocal
+            from app.models import AdminUser, UserRole, UserStatus
+            from app.utils.security import get_password_hash
+            from sqlalchemy import select
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
 
-        async with AsyncSessionLocal() as session:
-            stmt = select(AdminUser).where(AdminUser.email == "admin@eod.internal")
-            res = await session.execute(stmt)
-            if not res.scalar_one_or_none():
-                admin = AdminUser(
-                    dmid="ADMIN",
-                    name="System Administrator",
-                    email="admin@eod.internal",
-                    password_hash=get_password_hash("Admin@123456"),
-                    role=UserRole.ADMIN,
-                    status=UserStatus.ACTIVE,
-                    is_demo_creds=True
-                )
-                session.add(admin)
-                await session.commit()
+            async with AsyncSessionLocal() as session:
+                stmt = select(AdminUser).where(AdminUser.email == "admin@eod.internal")
+                res = await session.execute(stmt)
+                if not res.scalar_one_or_none():
+                    admin = AdminUser(
+                        dmid="ADMIN",
+                        name="System Administrator",
+                        email="admin@eod.internal",
+                        password_hash=get_password_hash("Admin@123456"),
+                        role=UserRole.ADMIN,
+                        status=UserStatus.ACTIVE,
+                        is_demo_creds=True
+                    )
+                    session.add(admin)
+                    await session.commit()
+    except Exception as e:
+        print(f"[Startup Warning] SQLite table init: {e}")
 
     yield
     # Gracefully close connection pool on shutdown
