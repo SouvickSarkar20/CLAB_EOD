@@ -16,6 +16,7 @@ from app.utils.security import (
     create_refresh_token, decode_token
 )
 from app.services.auth_service import AuthService
+from app.services.go_client import GoServiceClient
 from app.config import settings
 from app.dependencies.rate_limit import rate_limit_auth
 
@@ -31,21 +32,52 @@ async def login(
     """
     Authenticate Admin or District Manager.
     Accepts email or DMID in the 'email' field.
+    Checks EODDB_Users via Go service, with fallback to AdminUser.
     """
-    identifier = payload.email.strip().lower()
-    
-    # Query user by email OR dmid
-    stmt = select(AdminUser).where(
-        (AdminUser.email == identifier) | (AdminUser.dmid == payload.email.strip())
-    )
-    res = await db.execute(stmt)
-    user = res.scalar_one_or_none()
+    identifier = payload.email.strip()
+    user = None
 
-    if not user or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials. Please check your username/email and password."
+    # 1. Check EODDB_Users in Azure SQL via Go microservice
+    try:
+        go_user = await GoServiceClient.verify_user(identifier, payload.password)
+        if go_user:
+            stmt = select(AdminUser).where(
+                (AdminUser.dmid == go_user["id"]) | 
+                (AdminUser.name == go_user["district_manager"]) |
+                (AdminUser.email == identifier.lower())
+            )
+            res = await db.execute(stmt)
+            user = res.scalar_one_or_none()
+            if not user:
+                role = UserRole.ADMIN if "admin" in go_user.get("role", "").lower() else UserRole.DISTRICT_MANAGER
+                user = AdminUser(
+                    dmid=go_user["id"],
+                    name=go_user["district_manager"],
+                    email=f"{go_user['id'].lower()}@eod.internal",
+                    password_hash=get_password_hash(payload.password),
+                    role=role,
+                    status=UserStatus.ACTIVE,
+                    is_demo_creds=False
+                )
+                db.add(user)
+                await db.commit()
+                await db.refresh(user)
+    except Exception:
+        pass
+
+    # 2. Fallback to existing AdminUser database credentials
+    if not user:
+        stmt = select(AdminUser).where(
+            (AdminUser.email == identifier.lower()) | (AdminUser.dmid == identifier)
         )
+        res = await db.execute(stmt)
+        user = res.scalar_one_or_none()
+
+        if not user or not verify_password(payload.password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials. Please check your username/email and password."
+            )
 
     if user.status != UserStatus.ACTIVE:
         raise HTTPException(

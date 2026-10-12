@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str = ""
     
     FRONTEND_URL: str = "http://localhost:5173"
+    GO_SERVICE_URL: str = "http://localhost:8081"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

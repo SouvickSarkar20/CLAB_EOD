@@ -9,6 +9,8 @@ __pycache__/
 .env
 .env.*
 *.env
+!.env.example
+!*.env.example
 
 # Large data files
 *.xlsx
@@ -17,9 +19,13 @@ __pycache__/
 # Build outputs
 dist/
 build/
+bin/
+*.exe
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
+test-connection-go/
+backend/test_e2e.py
 
 # IDE & OS
 .vscode/

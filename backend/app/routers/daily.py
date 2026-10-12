@@ -10,6 +10,7 @@ from app.models import AdminUser
 from app.schemas.daily import DailyRow, DailySummaryResponse, DailyBreakdownResponse
 from app.utils.pagination import PaginatedResponse, create_paginated_response
 from app.services.analytics_service import AnalyticsService
+from app.services.go_client import GoServiceClient
 
 router = APIRouter()
 
@@ -27,21 +28,61 @@ async def get_daily_records(
     db: AsyncSession = Depends(get_db),
     _: AdminUser = Depends(require_mfa)
 ):
-    """Fetch paginated Daily records with filters."""
-    resolved_dm_uuid = await AnalyticsService.resolve_dm_uuid(db, dm_id)
-    items, total = await AnalyticsService.get_daily_records(
-        db=db,
-        start_date=start_date,
-        end_date=end_date,
-        month=month,
-        dm_id=resolved_dm_uuid,
-        district_id=district_id,
-        station_id=station_id,
-        operator_code=operator_code,
-        page=page,
-        page_size=page_size
-    )
-    return create_paginated_response(items=items, total=total, page=page, page_size=page_size)
+    """Fetch paginated Daily records with filters from Go microservice (with fallback)."""
+    month_str = str(month) if month else "202607"
+    try:
+        data = await GoServiceClient.get_daily_logs(
+            month=month_str,
+            dm=dm_id,
+            station_id=station_id,
+            page=page,
+            page_size=page_size
+        )
+        items = []
+        for idx, it in enumerate(data.get("items", [])):
+            items.append(
+                DailyRow(
+                    record_id=idx + 1 + (page - 1) * page_size,
+                    enroll_date=it["enroll_date"],
+                    station_id=it["station_id"],
+                    station_name=f"Station {it['station_id']}",
+                    operator_code=it.get("operator_name") or "N/A",
+                    operator_name=it.get("operator_name") or "N/A",
+                    district_name=it.get("district") or "N/A",
+                    dm_name=it.get("district_manager") or "N/A",
+                    total_enrollment=it["total_enrollment"],
+                    total_amount=it["total_amount"],
+                    bmu_100=it["bmu_100"],
+                    bmu_125=it["bmu_125"],
+                    dmu_50=it["dmu_50"],
+                    dmu_75=it["dmu_75"],
+                    mbu_0=it["mbu_0"],
+                    mbu_100=it["mbu_100"],
+                    mbu_125=it["mbu_125"],
+                    new_0=it["new_0"]
+                )
+            )
+        return create_paginated_response(
+            items=items,
+            total=data.get("total_count", 0),
+            page=page,
+            page_size=page_size
+        )
+    except Exception:
+        resolved_dm_uuid = await AnalyticsService.resolve_dm_uuid(db, dm_id)
+        items, total = await AnalyticsService.get_daily_records(
+            db=db,
+            start_date=start_date,
+            end_date=end_date,
+            month=month,
+            dm_id=resolved_dm_uuid,
+            district_id=district_id,
+            station_id=station_id,
+            operator_code=operator_code,
+            page=page,
+            page_size=page_size
+        )
+        return create_paginated_response(items=items, total=total, page=page, page_size=page_size)
 
 @router.get("/summary", response_model=DailySummaryResponse)
 async def get_daily_summary_overview(
@@ -53,16 +94,24 @@ async def get_daily_summary_overview(
     db: AsyncSession = Depends(get_db),
     _: AdminUser = Depends(require_mfa)
 ):
-    """Fetch Daily Analytics Overview: Daily trend line, Top performing stations, Category mix."""
-    resolved_dm_uuid = await AnalyticsService.resolve_dm_uuid(db, dm_id)
-    return await AnalyticsService.get_daily_summary_overview(
-        db=db,
-        start_date=start_date,
-        end_date=end_date,
-        month=month,
-        dm_id=resolved_dm_uuid,
-        district_id=district_id
-    )
+    """Fetch Daily Analytics Overview from Go microservice (with fallback)."""
+    month_str = str(month) if month else "202607"
+    try:
+        data = await GoServiceClient.get_dm_overview(
+            month=month_str,
+            dm=dm_id
+        )
+        return DailySummaryResponse.model_validate(data)
+    except Exception:
+        resolved_dm_uuid = await AnalyticsService.resolve_dm_uuid(db, dm_id)
+        return await AnalyticsService.get_daily_summary_overview(
+            db=db,
+            start_date=start_date,
+            end_date=end_date,
+            month=month,
+            dm_id=resolved_dm_uuid,
+            district_id=district_id
+        )
 
 @router.get("/breakdown", response_model=DailyBreakdownResponse)
 async def get_daily_breakdown(
