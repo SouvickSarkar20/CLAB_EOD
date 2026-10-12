@@ -1,6 +1,8 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
+from app.services.go_client import GoServiceClient
 from app.routers import (
     auth,
     district_managers,
@@ -12,10 +14,19 @@ from app.routers import (
     dm,
 )
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize GoServiceClient persistent connection pool on startup
+    GoServiceClient.get_client()
+    yield
+    # Gracefully close connection pool on shutdown
+    await GoServiceClient.close()
+
 app = FastAPI(
     title="EOD Management & Analytics Dashboard API",
     description="Backend API providing operation supervision, analytics, and Supabase 2FA authentication for EOD operation.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS configuration

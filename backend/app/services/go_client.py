@@ -3,42 +3,75 @@ from typing import Optional, Dict, Any, List
 from app.config import settings
 
 class GoServiceClient:
-    """Async client communicating with the Go database microservice."""
-    
+    """
+    High-performance Async Client for Go Core Data Engine.
+    Uses a persistent Keep-Alive connection pool to minimize network latency (<2ms).
+    """
+    _client: Optional[httpx.AsyncClient] = None
+
     @classmethod
     def base_url(cls) -> str:
         return getattr(settings, "GO_SERVICE_URL", "http://localhost:8081").rstrip("/")
 
     @classmethod
+    def get_client(cls) -> httpx.AsyncClient:
+        """Returns or initializes the singleton persistent connection pool."""
+        if cls._client is None or cls._client.is_closed:
+            limits = httpx.Limits(
+                max_keepalive_connections=20,
+                max_connections=50,
+                keepalive_expiry=60.0
+            )
+            timeout = httpx.Timeout(
+                connect=5.0,
+                read=120.0,
+                write=30.0,
+                pool=5.0
+            )
+            cls._client = httpx.AsyncClient(
+                base_url=cls.base_url(),
+                limits=limits,
+                timeout=timeout
+            )
+        return cls._client
+
+    @classmethod
+    async def close(cls):
+        """Cleanly close connection pool on FastAPI shutdown."""
+        if cls._client is not None and not cls._client.is_closed:
+            await cls._client.aclose()
+            cls._client = None
+
+    @classmethod
     async def health_check(cls) -> Dict[str, Any]:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{cls.base_url()}/health")
-            resp.raise_for_status()
-            return resp.json()
+        client = cls.get_client()
+        resp = await client.get("/health")
+        resp.raise_for_status()
+        return resp.json()
 
     @classmethod
     async def verify_user(cls, username: str, password: str) -> Optional[Dict[str, Any]]:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            try:
-                resp = await client.post(
-                    f"{cls.base_url()}/api/auth/verify",
-                    json={"username": username, "password": password}
-                )
-                if resp.status_code == 200:
-                    return resp.json()
-                return None
-            except Exception:
-                return None
+        client = cls.get_client()
+        try:
+            resp = await client.post(
+                "/api/auth/verify",
+                json={"username": username, "password": password}
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            return None
+        except Exception:
+            return None
 
     @classmethod
     async def get_filter_options(cls, dm: Optional[str] = None) -> Dict[str, Any]:
         params = {}
         if dm:
             params["dm"] = dm
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await client.get(f"{cls.base_url()}/api/filters/options", params=params)
-            resp.raise_for_status()
-            return resp.json()
+        client = cls.get_client()
+        resp = await client.get("/api/filters/options", params=params)
+        resp.raise_for_status()
+        return resp.json()
 
     @classmethod
     async def get_dm_overview(
@@ -55,10 +88,10 @@ class GoServiceClient:
             params["district"] = district
         if station_id:
             params["station_id"] = station_id
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await client.get(f"{cls.base_url()}/api/dm/overview", params=params)
-            resp.raise_for_status()
-            return resp.json()
+        client = cls.get_client()
+        resp = await client.get("/api/dm/overview", params=params)
+        resp.raise_for_status()
+        return resp.json()
 
     @classmethod
     async def get_daily_logs(
@@ -84,18 +117,19 @@ class GoServiceClient:
             params["station_id"] = station_id
         if date:
             params["date"] = date
-        async with httpx.AsyncClient(timeout=25.0) as client:
-            resp = await client.get(f"{cls.base_url()}/api/daily/logs", params=params)
-            resp.raise_for_status()
-            return resp.json()
+        client = cls.get_client()
+        resp = await client.get("/api/daily/logs", params=params)
+        resp.raise_for_status()
+        return resp.json()
 
     @classmethod
     async def bulk_insert_records(cls, records: List[Dict[str, Any]]) -> Dict[str, Any]:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{cls.base_url()}/api/records/bulk-insert",
-                json={"records": records}
-            )
-            resp.raise_for_status()
-            return resp.json()
+        client = cls.get_client()
+        resp = await client.post(
+            "/api/records/bulk-insert",
+            json={"records": records}
+        )
+        resp.raise_for_status()
+        return resp.json()
+
 

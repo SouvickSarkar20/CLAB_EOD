@@ -60,11 +60,9 @@ async def get_filter_options(
         )
     except Exception as e:
         import logging
-        logging.error(f"[FILTERS] Error contacting Go microservice: {e}", exc_info=True)
-        resolved_dm_uuid = await AnalyticsService.resolve_dm_uuid(db, dm_id)
-        return await AnalyticsService.get_cascading_filter_options(
-            db=db,
-            month=month,
-            district_id=district_id,
-            dm_id=resolved_dm_uuid
+        logging.error(f"[FILTERS] Error contacting Go Core Engine: {e}", exc_info=True)
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=503,
+            detail="The core database engine is temporarily unavailable. Please try again shortly."
         )

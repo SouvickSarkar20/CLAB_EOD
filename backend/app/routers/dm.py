@@ -39,14 +39,10 @@ async def get_dm_overview(
         return DailySummaryResponse.model_validate(data)
     except Exception as e:
         import logging
-        logging.error(f"[DM_OVERVIEW] Error contacting Go microservice: {e}", exc_info=True)
-        return await AnalyticsService.get_daily_summary_overview(
-            db=db,
-            start_date=start_date,
-            end_date=end_date,
-            month=month,
-            dm_id=current_dm.id,
-            district_id=None
+        logging.error(f"[DM_OVERVIEW] Error contacting Go Core Engine: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The analytics engine is currently processing. Please refresh in a moment."
         )
 
 @router.get("/daily", response_model=PaginatedResponse[DailyRow])
@@ -103,20 +99,13 @@ async def get_dm_daily_records(
             page=page,
             page_size=page_size
         )
-    except Exception:
-        items, total = await AnalyticsService.get_daily_records(
-            db=db,
-            start_date=start_date,
-            end_date=end_date,
-            month=month,
-            dm_id=current_dm.id,
-            district_id=None,
-            station_id=station_id,
-            operator_code=operator_code,
-            page=page,
-            page_size=page_size
+    except Exception as e:
+        import logging
+        logging.error(f"[DM_DAILY] Error contacting Go Core Engine: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The records engine is currently processing. Please refresh in a moment."
         )
-        return create_paginated_response(items=items, total=total, page=page, page_size=page_size)
 
 @router.get("/daily/breakdown", response_model=DailyBreakdownResponse)
 async def get_dm_daily_breakdown(
