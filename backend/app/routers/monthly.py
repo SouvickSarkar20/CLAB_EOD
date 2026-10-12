@@ -43,6 +43,53 @@ async def get_monthly_records(
         page=page,
         page_size=page_size
     )
+    if total > 0:
+        return create_paginated_response(items=items, total=total, page=page, page_size=page_size)
+
+    # Delegate to Go microservice backed by Azure SQL
+    try:
+        from decimal import Decimal
+        from app.services.go_client import GoServiceClient
+        month_str = str(month) if month else "202607"
+        go_data = await GoServiceClient.get_daily_logs(
+            month=month_str,
+            dm=None,
+            station_id=station_id,
+            page=page,
+            page_size=page_size
+        )
+        logs = go_data.get("items", [])
+        tot_count = go_data.get("total_count", len(logs))
+        res_items = []
+        for idx, it in enumerate(logs):
+            res_items.append(
+                MonthlyRow(
+                    summary_id=idx + 1 + (page - 1) * page_size,
+                    enroll_month=int(month_str),
+                    station_id=it.get("station_id", ""),
+                    station_name=f"Station {it.get('station_id', '')}",
+                    operator_code=it.get("operator_name", ""),
+                    operator_name=it.get("operator_name", ""),
+                    district_id=1,
+                    district_name=it.get("district", ""),
+                    dm_id=it.get("district_manager", ""),
+                    dm_name=it.get("district_manager", ""),
+                    total_enrollment=it.get("total_enrollment", 0),
+                    total_amount=Decimal(str(it.get("total_amount", 0.0))),
+                    bmu_100=it.get("bmu_100", 0),
+                    dmu_50=it.get("dmu_50", 0),
+                    mbu_0=it.get("mbu_0", 0),
+                    mbu_100=it.get("mbu_100", 0),
+                    new_0=it.get("new_0", 0),
+                    bmu_125=it.get("bmu_125", 0),
+                    dmu_75=it.get("dmu_75", 0),
+                    mbu_125=it.get("mbu_125", 0)
+                )
+            )
+        return create_paginated_response(items=res_items, total=tot_count, page=page, page_size=page_size)
+    except Exception:
+        pass
+
     return create_paginated_response(items=items, total=total, page=page, page_size=page_size)
 
 @router.get("/summary", response_model=MonthlySummaryResponse)
@@ -72,10 +119,24 @@ async def get_monthly_summary_overview(
         from decimal import Decimal
         from app.services.go_client import GoServiceClient
         month_str = str(month) if month else "202607"
+        
+        # Resolve district name if district_id is provided
+        district_name = None
+        if district_id:
+            try:
+                f_opts = await GoServiceClient.get_filter_options()
+                d_list = f_opts.get("districts", [])
+                if 1 <= district_id <= len(d_list):
+                    district_name = d_list[district_id - 1]
+            except Exception:
+                pass
+
+        dm_name = dm_id if (dm_id and not dm_id.startswith("{")) else None
+
         go_data = await GoServiceClient.get_dm_overview(
             month=month_str,
-            dm=None,
-            district=None,
+            dm=dm_name,
+            district=district_name,
             station_id=None
         )
         if go_data:

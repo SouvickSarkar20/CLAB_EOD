@@ -58,6 +58,44 @@ class DMService:
         count_stmt = select(func.count()).select_from(query.subquery())
         total = (await db.execute(count_stmt)).scalar() or 0
 
+        # If local database has no DMs, fetch directly from Azure SQL via Go
+        if total == 0:
+            try:
+                from datetime import datetime, timezone
+                azure_users = await GoServiceClient.list_users()
+                dm_items = []
+                for u in azure_users:
+                    if "admin" in u.get("role", "").lower():
+                        continue
+                    dm_name = u.get("district_manager", "")
+                    st_cnt = 0
+                    dist_names = []
+                    try:
+                        st_data = await GoServiceClient.get_dm_stations(dm_name)
+                        st_list = st_data.get("stations", [])
+                        st_cnt = len(st_list)
+                        dist_names = sorted(list(set(s.get("district_name") for s in st_list if s.get("district_name"))))
+                    except Exception:
+                        pass
+
+                    u_id = uuid.uuid5(uuid.NAMESPACE_DNS, u.get("id", ""))
+                    dm_items.append(
+                        DMListItem(
+                            id=u_id,
+                            dmid=u.get("id", ""),
+                            name=dm_name,
+                            email=f"{u.get('id', '').lower()}@eod.internal",
+                            status=UserStatus.ACTIVE,
+                            assigned_stations_count=st_cnt,
+                            assigned_districts=dist_names,
+                            last_login_at=None,
+                            created_at=datetime.now(timezone.utc).replace(tzinfo=None)
+                        )
+                    )
+                return dm_items, len(dm_items)
+            except Exception:
+                pass
+
         offset = (page - 1) * page_size
         query = query.order_by(AdminUser.name.asc()).offset(offset).limit(page_size)
         res = await db.execute(query)

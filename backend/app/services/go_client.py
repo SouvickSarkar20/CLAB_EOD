@@ -64,6 +64,17 @@ class GoServiceClient:
             return None
 
     @classmethod
+    async def list_users(cls) -> List[Dict[str, Any]]:
+        client = cls.get_client()
+        try:
+            resp = await client.get("/api/auth/users")
+            if resp.status_code == 200:
+                return resp.json()
+            return []
+        except Exception:
+            return []
+
+    @classmethod
     async def get_filter_options(cls, dm: Optional[str] = None) -> Dict[str, Any]:
         params = {}
         if dm:
