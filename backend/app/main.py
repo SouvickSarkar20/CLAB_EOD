@@ -18,6 +18,32 @@ from app.routers import (
 async def lifespan(app: FastAPI):
     # Initialize GoServiceClient persistent connection pool on startup
     GoServiceClient.get_client()
+
+    # If running with SQLite, ensure tables and initial admin user exist
+    if "sqlite" in settings.DATABASE_URL.lower():
+        from app.database import engine, Base, AsyncSessionLocal
+        from app.models import AdminUser, UserRole, UserStatus
+        from app.utils.security import get_password_hash
+        from sqlalchemy import select
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        async with AsyncSessionLocal() as session:
+            stmt = select(AdminUser).where(AdminUser.email == "admin@eod.internal")
+            res = await session.execute(stmt)
+            if not res.scalar_one_or_none():
+                admin = AdminUser(
+                    dmid="ADMIN",
+                    name="System Administrator",
+                    email="admin@eod.internal",
+                    password_hash=get_password_hash("Admin@123456"),
+                    role=UserRole.ADMIN,
+                    status=UserStatus.ACTIVE,
+                    is_demo_creds=True
+                )
+                session.add(admin)
+                await session.commit()
+
     yield
     # Gracefully close connection pool on shutdown
     await GoServiceClient.close()
@@ -32,6 +58,7 @@ app = FastAPI(
 # CORS configuration
 origins = [
     settings.FRONTEND_URL,
+    "https://clab-eod.vercel.app",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:5174",

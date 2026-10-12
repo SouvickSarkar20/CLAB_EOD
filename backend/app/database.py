@@ -2,23 +2,26 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import DeclarativeBase
 from app.config import settings
 
-connect_args = {}
-# Enforce SSL for Supabase and production cloud deployments
-if "supabase" in settings.DATABASE_URL.lower() or settings.ENVIRONMENT.lower() in ["production", "prod"]:
-    connect_args["ssl"] = "require"
-    # Disable prepared statement cache for pgbouncer-based poolers (Supabase shared/session pooler)
-    # pgbouncer does not retain prepared statements across connections, causing InvalidSQLStatementNameError
-    connect_args["statement_cache_size"] = 0
+if "sqlite" in settings.DATABASE_URL.lower():
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=False,
+    )
+else:
+    connect_args = {}
+    if "supabase" in settings.DATABASE_URL.lower() or settings.ENVIRONMENT.lower() in ["production", "prod"]:
+        connect_args["ssl"] = "require"
+        connect_args["statement_cache_size"] = 0
 
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=False,
-    pool_size=3,
-    max_overflow=5,
-    pool_timeout=30,
-    pool_recycle=1800,
-    connect_args=connect_args
-)
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=False,
+        pool_size=3,
+        max_overflow=5,
+        pool_timeout=30,
+        pool_recycle=1800,
+        connect_args=connect_args
+    )
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 class Base(DeclarativeBase):

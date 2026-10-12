@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import model_validator
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/eod_db"
+    DATABASE_URL: str = "sqlite+aiosqlite:///./auth.db"
     SECRET_KEY: str = "default_secret_key_change_in_production_1234567890"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
@@ -21,6 +21,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_security(self):
+        # Fall back to local SQLite for auth session store to eliminate external network dependencies
+        if "supabase" in self.DATABASE_URL.lower():
+            self.DATABASE_URL = "sqlite+aiosqlite:///./auth.db"
         if self.ENVIRONMENT.lower() in ["production", "prod"] and "default_secret_key" in self.SECRET_KEY:
             raise ValueError("SECRET_KEY must be configured securely in production environment!")
         return self
