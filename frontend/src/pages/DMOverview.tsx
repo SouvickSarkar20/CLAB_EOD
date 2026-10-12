@@ -204,14 +204,32 @@ export function DMOverview() {
                           nameKey="category"
                           cx="50%"
                           cy="50%"
-                          innerRadius={50}
-                          outerRadius={70}
+                          innerRadius={45}
+                          outerRadius={65}
                           paddingAngle={2}
                           stroke="none"
+                          label={(props: any) => {
+                            const PIE_COLORS = ['#1D4ED8', '#047857', '#B91C1C', '#6D28D9', '#0369A1', '#A21CAF'];
+                            const { x, y, cx, value, index } = props;
+                            return (
+                              <text
+                                x={x}
+                                y={y}
+                                fill={PIE_COLORS[index % PIE_COLORS.length]}
+                                textAnchor={x > cx ? 'start' : 'end'}
+                                dominantBaseline="central"
+                                fontSize={12}
+                                fontWeight={700}
+                              >
+                                {value.toLocaleString()}
+                              </text>
+                            );
+                          }}
+                          labelLine={{ stroke: '#CBD5E1', strokeWidth: 1 }}
                         >
                           {data.category_mix.map((entry, index) => {
-                            const colors = ['#1A3A8F', '#7B9ED9', '#CBD5E1', '#E2E8F0'];
-                            return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
+                            const PIE_COLORS = ['#1D4ED8', '#047857', '#B91C1C', '#6D28D9', '#0369A1', '#A21CAF'];
+                            return <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />;
                           })}
                         </Pie>
                         <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #E2E8F0', boxShadow: 'none' }} itemStyle={{ fontSize: '12px' }} />
