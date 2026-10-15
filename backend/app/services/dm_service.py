@@ -424,6 +424,19 @@ class DMService:
             return None
 
         temp_password = custom_password.strip() if custom_password and custom_password.strip() else generate_temp_password()
+        
+        # Sync password to Azure SQL DMInfo via Go microservice
+        dm_identifier = dm.dmid or dm.name
+        try:
+            await GoServiceClient.update_password(dm_identifier, temp_password)
+        except Exception as e:
+            import logging
+            logging.error(f"[RESET_DM_PASSWORD] Failed to update password in Azure SQL DMInfo: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to reset password in database: {str(e)}"
+            )
+
         dm.password_hash = get_password_hash(temp_password)
         dm.must_change_password = True
         dm.is_demo_creds = False

@@ -231,4 +231,27 @@ func (h *APIHandler) GetDMStations(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// UpdatePassword handles updating password in DMInfo
+func (h *APIHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	var req models.UpdatePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid JSON body: "+err.Error())
+		return
+	}
+
+	resp, err := h.svc.UpdatePassword(r.Context(), req.UserID, req.NewPassword)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+
 

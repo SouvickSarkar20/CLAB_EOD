@@ -60,6 +60,7 @@ func main() {
 	mux.HandleFunc("/api/records/bulk-insert", h.BulkInsert)
 	mux.HandleFunc("/api/admin/assign-stations", h.AssignStations)
 	mux.HandleFunc("/api/dm/stations", h.GetDMStations)
+	mux.HandleFunc("/api/auth/update-password", h.UpdatePassword)
 
 	server := &http.Server{
 		Addr:         ":" + cfg.ServerPort,

@@ -200,4 +200,15 @@ type DMStationItem struct {
 	StationType  string `json:"station_type"`
 }
 
+// UpdatePasswordRequest & Response
+type UpdatePasswordRequest struct {
+	UserID      string `json:"user_id"`
+	NewPassword string `json:"new_password"`
+}
+
+type UpdatePasswordResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
 

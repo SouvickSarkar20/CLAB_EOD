@@ -391,6 +391,18 @@ async def change_password(
             detail="Current password is incorrect"
         )
     
+    # Sync new password directly to Azure SQL DMInfo
+    dm_identifier = current_user.dmid or current_user.name
+    try:
+        await GoServiceClient.update_password(dm_identifier, payload.new_password)
+    except Exception as e:
+        import logging
+        logging.error(f"[CHANGE_PASSWORD] Failed to update password in Azure SQL DMInfo: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update password in database: {str(e)}"
+        )
+
     current_user.password_hash = get_password_hash(payload.new_password)
     current_user.must_change_password = False
     current_user.is_demo_creds = False
@@ -398,3 +410,4 @@ async def change_password(
     await db.refresh(current_user)
 
     return UserProfileSchema.model_validate(current_user)
+

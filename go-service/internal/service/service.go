@@ -1226,3 +1226,32 @@ func (s *DataService) GetStationsByDM(ctx context.Context, dmName string) ([]mod
 	return items, nil
 }
 
+// UpdatePassword updates the password in DMInfo for a DM or Admin
+func (s *DataService) UpdatePassword(ctx context.Context, userID, newPassword string) (*models.UpdatePasswordResponse, error) {
+	userID = strings.TrimSpace(userID)
+	newPassword = strings.TrimSpace(newPassword)
+	if userID == "" || newPassword == "" {
+		return nil, fmt.Errorf("user_id and new_password are required")
+	}
+
+	// Expand Password column size to NVARCHAR(100) if not already done, ignoring if no DDL permissions
+	_, _ = s.pool.DB.ExecContext(ctx, "ALTER TABLE DMInfo ALTER COLUMN Password NVARCHAR(100)")
+
+	query := `UPDATE DMInfo SET Password = @newPassword WHERE DM_ID = @id OR District_Manager = @id`
+	res, err := s.pool.DB.ExecContext(ctx, query, sql.Named("newPassword", newPassword), sql.Named("id", userID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to update password in DMInfo: %w", err)
+	}
+
+	rowsAff, _ := res.RowsAffected()
+	if rowsAff == 0 {
+		return nil, fmt.Errorf("user '%s' not found in DMInfo", userID)
+	}
+
+	return &models.UpdatePasswordResponse{
+		Success: true,
+		Message: fmt.Sprintf("Password successfully updated in DMInfo for %s", userID),
+	}, nil
+}
+
+

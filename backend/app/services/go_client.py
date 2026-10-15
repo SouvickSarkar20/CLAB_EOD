@@ -192,5 +192,17 @@ class GoServiceClient:
         resp.raise_for_status()
         return resp.json()
 
+    @classmethod
+    async def update_password(cls, user_id: str, new_password: str) -> Dict[str, Any]:
+        """Update user password directly in Azure SQL DMInfo via Go microservice."""
+        client = cls.get_client()
+        resp = await client.post(
+            "/api/auth/update-password",
+            json={"user_id": user_id, "new_password": new_password}
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
 
 

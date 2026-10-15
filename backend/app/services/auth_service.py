@@ -1,4 +1,5 @@
 from typing import Optional, Dict, Any
+from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from supabase import create_client, Client
@@ -23,6 +24,20 @@ class AuthService:
         """
         old_email = user.email
         user.email = new_email.strip().lower()
+
+        # Sync Admin password directly to Azure SQL DMInfo via Go microservice
+        from app.services.go_client import GoServiceClient
+        dm_identifier = user.dmid or user.name or "CLAB@16"
+        try:
+            await GoServiceClient.update_password(dm_identifier, new_password)
+        except Exception as e:
+            import logging
+            logging.error(f"[UPDATE_ADMIN_CREDENTIALS] Failed to sync password to Azure SQL DMInfo: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update admin password in database: {str(e)}"
+            )
+
         user.password_hash = get_password_hash(new_password)
         user.is_demo_creds = False
         user.must_change_password = False
