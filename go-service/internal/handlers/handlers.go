@@ -152,7 +152,7 @@ func (h *APIHandler) BulkInsert(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// AssignStations handles assigning stations to a DM in WorkingKIT
+// AssignStations handles assigning stations to a DM in EODMth and EODDt
 func (h *APIHandler) AssignStations(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -174,7 +174,7 @@ func (h *APIHandler) AssignStations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// GetDMStations returns currently assigned stations for a DM from WorkingKIT
+// GetDMStations returns currently assigned stations for a DM from EODMth
 func (h *APIHandler) GetDMStations(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")

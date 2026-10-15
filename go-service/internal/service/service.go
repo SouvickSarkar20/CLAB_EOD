@@ -701,10 +701,23 @@ func (s *DataService) BulkInsertRecords(ctx context.Context, records []models.Ra
 	}, nil
 }
 
-// AssignStations updates the DistrictManger column in WorkingKIT for the specified station IDs
-func (s *DataService) AssignStations(ctx context.Context, dmName string, stationIDs []string) (*models.AssignStationsResponse, error) {
-	if dmName == "" {
+// AssignStations updates DistrictManger and DMID in EODMth and EODDt for the specified station IDs
+func (s *DataService) AssignStations(ctx context.Context, dmIdentifier string, stationIDs []string) (*models.AssignStationsResponse, error) {
+	dmIdentifier = strings.TrimSpace(dmIdentifier)
+	if dmIdentifier == "" {
 		return nil, fmt.Errorf("dm_name cannot be empty")
+	}
+
+	// 1. Resolve canonical DM Name and DMID from DMInfo
+	var resolvedName, resolvedID string
+	err := s.pool.DB.QueryRowContext(ctx, `
+		SELECT TOP 1 DM_ID, District_Manager 
+		FROM DMInfo WITH (NOLOCK) 
+		WHERE DM_ID = @id OR District_Manager = @name
+	`, sql.Named("id", dmIdentifier), sql.Named("name", dmIdentifier)).Scan(&resolvedID, &resolvedName)
+	if err != nil {
+		resolvedName = dmIdentifier
+		resolvedID = dmIdentifier
 	}
 
 	tx, err := s.pool.DB.BeginTx(ctx, nil)
@@ -713,32 +726,39 @@ func (s *DataService) AssignStations(ctx context.Context, dmName string, station
 	}
 	defer tx.Rollback()
 
-	// 1. Unassign all stations currently assigned to this DM
-	unassignSQL := `UPDATE WorkingKIT SET DistrictManger = NULL WHERE DistrictManger = @dmName`
-	_, err = tx.ExecContext(ctx, unassignSQL, sql.Named("dmName", dmName))
-	if err != nil {
-		return nil, fmt.Errorf("failed to clear previous station assignments: %w", err)
-	}
+	// 2. Unassign previous stations for this DM in EODMth and EODDt
+	unassignMthSQL := `UPDATE EODMth SET DistrictManger = NULL, DMID = NULL WHERE DistrictManger = @dmName OR DMID = @dmID`
+	_, _ = tx.ExecContext(ctx, unassignMthSQL, sql.Named("dmName", resolvedName), sql.Named("dmID", resolvedID))
 
-	// 2. Assign the new list of stations to this DM
+	unassignDtSQL := `UPDATE EODDt SET DistrictManger = NULL, DMID = NULL WHERE DistrictManger = @dmName OR DMID = @dmID`
+	_, _ = tx.ExecContext(ctx, unassignDtSQL, sql.Named("dmName", resolvedName), sql.Named("dmID", resolvedID))
+
+	// 3. Assign the new list of stations to this DM in EODMth and EODDt
 	assignedCount := 0
 	if len(stationIDs) > 0 {
-		stmt, err := tx.PrepareContext(ctx, `UPDATE WorkingKIT SET DistrictManger = @dmName WHERE StationID = @stnID`)
+		stmtMth, err := tx.PrepareContext(ctx, `UPDATE EODMth SET DistrictManger = @dmName, DMID = @dmID WHERE OPERATOR_ID = @stnID`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to prepare assignment statement: %w", err)
+			return nil, fmt.Errorf("failed to prepare EODMth assignment statement: %w", err)
 		}
-		defer stmt.Close()
+		defer stmtMth.Close()
+
+		stmtDt, err := tx.PrepareContext(ctx, `UPDATE EODDt SET DistrictManger = @dmName, DMID = @dmID WHERE OPERATOR_ID = @stnID`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to prepare EODDt assignment statement: %w", err)
+		}
+		defer stmtDt.Close()
 
 		for _, sid := range stationIDs {
 			sidTrimmed := strings.TrimSpace(sid)
 			if sidTrimmed == "" {
 				continue
 			}
-			res, err := stmt.ExecContext(ctx, sql.Named("dmName", dmName), sql.Named("stnID", sidTrimmed))
+			_, _ = stmtMth.ExecContext(ctx, sql.Named("dmName", resolvedName), sql.Named("dmID", resolvedID), sql.Named("stnID", sidTrimmed))
+			resDt, err := stmtDt.ExecContext(ctx, sql.Named("dmName", resolvedName), sql.Named("dmID", resolvedID), sql.Named("stnID", sidTrimmed))
 			if err != nil {
 				return nil, fmt.Errorf("failed assigning station %s: %w", sidTrimmed, err)
 			}
-			if rowsAff, _ := res.RowsAffected(); rowsAff > 0 {
+			if rowsAff, _ := resDt.RowsAffected(); rowsAff > 0 {
 				assignedCount += int(rowsAff)
 			}
 		}
@@ -755,21 +775,27 @@ func (s *DataService) AssignStations(ctx context.Context, dmName string, station
 
 	return &models.AssignStationsResponse{
 		Success:      true,
-		UpdatedCount: assignedCount,
-		Message:      fmt.Sprintf("Successfully assigned %d stations to %s", assignedCount, dmName),
+		UpdatedCount: len(stationIDs),
+		Message:      fmt.Sprintf("Successfully assigned %d stations to %s (%s)", len(stationIDs), resolvedName, resolvedID),
 	}, nil
 }
 
-// GetStationsByDM returns all stations currently assigned to a given DM in WorkingKIT
+// GetStationsByDM returns all stations currently assigned to a given DM in EODMth
 func (s *DataService) GetStationsByDM(ctx context.Context, dmName string) ([]models.DMStationItem, error) {
+	dmName = strings.TrimSpace(dmName)
+	if dmName == "" {
+		return []models.DMStationItem{}, nil
+	}
+
 	query := `
 		SELECT 
-			StationID, 
-			COALESCE(District, 'N/A') as district,
-			COALESCE(StationType, 'Standard') as station_type
-		FROM WorkingKIT WITH (NOLOCK)
-		WHERE DistrictManger = @dmName
-		ORDER BY StationID
+			OPERATOR_ID, 
+			COALESCE(MAX(District), 'N/A') as district,
+			'Standard' as station_type
+		FROM EODMth WITH (NOLOCK)
+		WHERE (DistrictManger = @dmName OR DMID = @dmName)
+		GROUP BY OPERATOR_ID
+		ORDER BY OPERATOR_ID
 	`
 	rows, err := s.pool.DB.QueryContext(ctx, query, sql.Named("dmName", dmName))
 	if err != nil {
