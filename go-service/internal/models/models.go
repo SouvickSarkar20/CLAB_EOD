@@ -103,6 +103,35 @@ type PaginatedDailyResponse struct {
 	PageSize   int               `json:"page_size"`
 }
 
+// MonthlyRecordItem represents a pre-aggregated monthly record from EODMth
+type MonthlyRecordItem struct {
+	EnrollMonth     string  `json:"enroll_month"`
+	StationID       string  `json:"station_id"`
+	StationName     string  `json:"station_name"`
+	OperatorCode    string  `json:"operator_code"`
+	OperatorName    string  `json:"operator_name"`
+	District        string  `json:"district"`
+	DistrictManager string  `json:"district_manager"`
+	DMID            string  `json:"dm_id"`
+	TotalEnrollment int     `json:"total_enrollment"`
+	TotalAmount     float64 `json:"total_amount"`
+	BMU100          int     `json:"bmu_100"`
+	BMU125          int     `json:"bmu_125"`
+	DMU50           int     `json:"dmu_50"`
+	DMU75           int     `json:"dmu_75"`
+	MBU0            int     `json:"mbu_0"`
+	MBU100          int     `json:"mbu_100"`
+	MBU125          int     `json:"mbu_125"`
+	New0            int     `json:"new_0"`
+}
+
+type PaginatedMonthlyResponse struct {
+	Items      []MonthlyRecordItem `json:"items"`
+	TotalCount int                 `json:"total_count"`
+	Page       int                 `json:"page"`
+	PageSize   int                 `json:"page_size"`
+}
+
 // HealthStatus
 type HealthStatus struct {
 	Status    string    `json:"status"`

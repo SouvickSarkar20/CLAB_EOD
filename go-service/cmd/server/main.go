@@ -56,6 +56,7 @@ func main() {
 	mux.HandleFunc("/api/filters/options", h.GetFilterOptions)
 	mux.HandleFunc("/api/dm/overview", h.GetDMOverview)
 	mux.HandleFunc("/api/daily/logs", h.GetDailyLogs)
+	mux.HandleFunc("/api/monthly/records", h.GetMonthlyRecords)
 	mux.HandleFunc("/api/records/bulk-insert", h.BulkInsert)
 	mux.HandleFunc("/api/admin/assign-stations", h.AssignStations)
 	mux.HandleFunc("/api/dm/stations", h.GetDMStations)

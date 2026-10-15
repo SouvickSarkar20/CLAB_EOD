@@ -611,6 +611,147 @@ func (s *DataService) GetDailyLogs(ctx context.Context, month, dmName, district,
 	}, nil
 }
 
+// ----------------- MONTHLY RECORDS (EODMth) -----------------
+
+// GetMonthlyRecords queries pre-aggregated monthly operator rows directly from EODMth
+func (s *DataService) GetMonthlyRecords(ctx context.Context, month, dmName, district, stationID, operatorCode string, page, pageSize int) (*models.PaginatedMonthlyResponse, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 25
+	}
+	offset := (page - 1) * pageSize
+
+	var whereClauses []string
+	var args []any
+
+	if month != "" && month != "all" {
+		whereClauses = append(whereClauses, "EnrollMth = @month")
+		args = append(args, sql.Named("month", month))
+	}
+	if dmName != "" {
+		whereClauses = append(whereClauses, "(DistrictManger = @dmName OR DMID = @dmName)")
+		args = append(args, sql.Named("dmName", dmName))
+	}
+	if district != "" {
+		whereClauses = append(whereClauses, "District = @district")
+		args = append(args, sql.Named("district", district))
+	}
+	if stationID != "" {
+		whereClauses = append(whereClauses, "OPERATOR_ID = @stationID")
+		args = append(args, sql.Named("stationID", stationID))
+	}
+	if operatorCode != "" && operatorCode != stationID {
+		whereClauses = append(whereClauses, "(OPERATOR_ID = @opCode OR OperatorName LIKE @opNameLike)")
+		args = append(args, sql.Named("opCode", operatorCode), sql.Named("opNameLike", "%"+operatorCode+"%"))
+	}
+
+	whereSQL := ""
+	if len(whereClauses) > 0 {
+		whereSQL = " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	var wg sync.WaitGroup
+	var queryErr error
+	var countErr error
+	var totalCount int
+	items := []models.MonthlyRecordItem{}
+
+	// 1. Total Count Query
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		countSQL := fmt.Sprintf("SELECT COUNT(*) FROM EODMth WITH (NOLOCK) %s", whereSQL)
+		countErr = s.pool.DB.QueryRowContext(ctx, countSQL, args...).Scan(&totalCount)
+	}()
+
+	// 2. Data Query
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		dataSQL := fmt.Sprintf(`
+			SELECT 
+				COALESCE(EnrollMth, ''),
+				COALESCE(OPERATOR_ID, ''),
+				COALESCE(OperatorName, 'N/A'),
+				COALESCE(District, 'N/A'),
+				COALESCE(DistrictManger, 'N/A'),
+				COALESCE(DMID, ''),
+				COALESCE(TRY_CAST(Total_Enrollment AS INT), 0),
+				COALESCE(TRY_CAST(Total_amount AS FLOAT), 0),
+				COALESCE(TRY_CAST(BMU_100 AS INT), 0),
+				COALESCE(TRY_CAST(BMU_125 AS INT), 0),
+				COALESCE(TRY_CAST(DMU_50 AS INT), 0),
+				COALESCE(TRY_CAST(DMU_75 AS INT), 0),
+				COALESCE(TRY_CAST(MBU_0 AS INT), 0),
+				COALESCE(TRY_CAST(MBU_100 AS INT), 0),
+				COALESCE(TRY_CAST(MBU_125 AS INT), 0),
+				COALESCE(TRY_CAST(NEW_0 AS INT), 0)
+			FROM EODMth WITH (NOLOCK)
+			%s
+			ORDER BY EnrollMth DESC, OPERATOR_ID ASC
+			OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+		`, whereSQL)
+
+		argsWithPaging := append(append([]any{}, args...), sql.Named("offset", offset), sql.Named("pageSize", pageSize))
+		rows, err := s.pool.DB.QueryContext(ctx, dataSQL, argsWithPaging...)
+		if err != nil {
+			queryErr = err
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var it models.MonthlyRecordItem
+			err := rows.Scan(
+				&it.EnrollMonth,
+				&it.StationID,
+				&it.OperatorName,
+				&it.District,
+				&it.DistrictManager,
+				&it.DMID,
+				&it.TotalEnrollment,
+				&it.TotalAmount,
+				&it.BMU100,
+				&it.BMU125,
+				&it.DMU50,
+				&it.DMU75,
+				&it.MBU0,
+				&it.MBU100,
+				&it.MBU125,
+				&it.New0,
+			)
+			if err == nil {
+				it.StationName = it.OperatorName
+				it.OperatorCode = it.StationID
+				items = append(items, it)
+			}
+		}
+	}()
+
+	wg.Wait()
+
+	if queryErr != nil {
+		return nil, fmt.Errorf("error querying monthly records: %w", queryErr)
+	}
+
+	if countErr != nil || totalCount == 0 {
+		if len(items) == pageSize {
+			totalCount = page*pageSize + 1
+		} else {
+			totalCount = (page-1)*pageSize + len(items)
+		}
+	}
+
+	return &models.PaginatedMonthlyResponse{
+		Items:      items,
+		TotalCount: totalCount,
+		Page:       page,
+		PageSize:   pageSize,
+	}, nil
+}
+
 // BulkInsertRecords inserts an array of RawEODRecord rows into EODFiles
 func (s *DataService) BulkInsertRecords(ctx context.Context, records []models.RawEODRecord) (*models.BulkInsertResponse, error) {
 	if len(records) == 0 {

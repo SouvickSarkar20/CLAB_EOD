@@ -134,6 +134,36 @@ class GoServiceClient:
         return resp.json()
 
     @classmethod
+    async def get_monthly_records(
+        cls,
+        month: Optional[str] = None,
+        dm: Optional[str] = None,
+        district: Optional[str] = None,
+        station_id: Optional[str] = None,
+        operator_code: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 25
+    ) -> Dict[str, Any]:
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        if month:
+            params["month"] = month
+        if dm:
+            params["dm"] = dm
+        if district:
+            params["district"] = district
+        if station_id:
+            params["station_id"] = station_id
+        if operator_code:
+            params["operator_code"] = operator_code
+        client = cls.get_client()
+        resp = await client.get("/api/monthly/records", params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    @classmethod
     async def bulk_insert_records(cls, records: List[Dict[str, Any]]) -> Dict[str, Any]:
         client = cls.get_client()
         resp = await client.post(

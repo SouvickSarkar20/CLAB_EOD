@@ -130,6 +130,37 @@ func (h *APIHandler) GetDailyLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, logs)
 }
 
+// GetMonthlyRecords handles paginated monthly operator records from EODMth
+func (h *APIHandler) GetMonthlyRecords(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	month := r.URL.Query().Get("month")
+	dm := r.URL.Query().Get("dm")
+	district := r.URL.Query().Get("district")
+	stationID := r.URL.Query().Get("station_id")
+	operatorCode := r.URL.Query().Get("operator_code")
+
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 25
+	}
+
+	records, err := h.svc.GetMonthlyRecords(r.Context(), month, dm, district, stationID, operatorCode, page, pageSize)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, records)
+}
+
 // Bulk Insert Records
 func (h *APIHandler) BulkInsert(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

@@ -51,10 +51,11 @@ async def get_monthly_records(
         from decimal import Decimal
         from app.services.go_client import GoServiceClient
         month_str = str(month) if month else ""
-        go_data = await GoServiceClient.get_daily_logs(
+        go_data = await GoServiceClient.get_monthly_records(
             month=month_str,
-            dm=None,
+            dm=dm_id,
             station_id=station_id,
+            operator_code=operator_code,
             page=page,
             page_size=page_size
         )
@@ -62,17 +63,23 @@ async def get_monthly_records(
         tot_count = go_data.get("total_count", len(logs))
         res_items = []
         for idx, it in enumerate(logs):
+            mth_val = 0
+            if it.get("enroll_month"):
+                try:
+                    mth_val = int(it.get("enroll_month"))
+                except ValueError:
+                    mth_val = 0
             res_items.append(
                 MonthlyRow(
                     summary_id=idx + 1 + (page - 1) * page_size,
-                    enroll_month=int(month_str) if month_str else 0,
+                    enroll_month=mth_val,
                     station_id=it.get("station_id", ""),
-                    station_name=f"Station {it.get('station_id', '')}",
-                    operator_code=it.get("operator_name", ""),
+                    station_name=it.get("station_name", f"Station {it.get('station_id', '')}"),
+                    operator_code=it.get("operator_code", it.get("station_id", "")),
                     operator_name=it.get("operator_name", ""),
                     district_id=1,
                     district_name=it.get("district", ""),
-                    dm_id=it.get("district_manager", ""),
+                    dm_id=it.get("dm_id", it.get("district_manager", "")),
                     dm_name=it.get("district_manager", ""),
                     total_enrollment=it.get("total_enrollment", 0),
                     total_amount=Decimal(str(it.get("total_amount", 0.0))),
