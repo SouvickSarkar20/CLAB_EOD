@@ -50,10 +50,6 @@ export function FilterBar() {
       const response = await api.get('/api/filters/options', { params });
       const data: FilterOptionsResponse = response.data;
       setOptions(data);
-
-      if (!hasInitialized.current && !month && data.available_months.length > 0) {
-        setMonth(data.available_months[0]);
-      }
       hasInitialized.current = true;
     } catch (err) {
       console.error('Failed to load filter options:', err);

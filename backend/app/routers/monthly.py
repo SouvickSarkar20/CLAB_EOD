@@ -50,7 +50,7 @@ async def get_monthly_records(
     try:
         from decimal import Decimal
         from app.services.go_client import GoServiceClient
-        month_str = str(month) if month else "202607"
+        month_str = str(month) if month else ""
         go_data = await GoServiceClient.get_daily_logs(
             month=month_str,
             dm=None,
@@ -65,7 +65,7 @@ async def get_monthly_records(
             res_items.append(
                 MonthlyRow(
                     summary_id=idx + 1 + (page - 1) * page_size,
-                    enroll_month=int(month_str),
+                    enroll_month=int(month_str) if month_str else 0,
                     station_id=it.get("station_id", ""),
                     station_name=f"Station {it.get('station_id', '')}",
                     operator_code=it.get("operator_name", ""),
@@ -118,7 +118,7 @@ async def get_monthly_summary_overview(
     try:
         from decimal import Decimal
         from app.services.go_client import GoServiceClient
-        month_str = str(month) if month else "202607"
+        month_str = str(month) if month else ""
         
         # Resolve district name if district_id is provided
         district_name = None

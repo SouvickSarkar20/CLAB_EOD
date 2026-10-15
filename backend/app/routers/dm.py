@@ -30,7 +30,7 @@ async def get_dm_overview(
     Fetch DM Dashboard Overview from Go database microservice (with fallback).
     Automatically scoped to the authenticated DM's district.
     """
-    month_str = str(month) if month else "202607"
+    month_str = str(month) if month else ""
     dm_scope = current_dm.name if current_dm.role.value == "district_manager" else None
     try:
         data = await GoServiceClient.get_dm_overview(
@@ -61,7 +61,7 @@ async def get_dm_daily_records(
     """
     Fetch Daily records from Go database microservice (with fallback).
     """
-    month_str = str(month) if month else "202607"
+    month_str = str(month) if month else ""
     dm_scope = current_dm.name if current_dm.role.value == "district_manager" else None
     try:
         data = await GoServiceClient.get_daily_logs(
@@ -158,7 +158,7 @@ async def get_dm_monthly_records(
     # Delegate to Go microservice backed by Azure SQL
     try:
         from decimal import Decimal
-        month_str = str(month) if month else "202607"
+        month_str = str(month) if month else ""
         dm_scope = current_dm.name if current_dm.role.value == "district_manager" else None
         go_data = await GoServiceClient.get_daily_logs(
             month=month_str,
@@ -174,7 +174,7 @@ async def get_dm_monthly_records(
             res_items.append(
                 MonthlyRow(
                     summary_id=idx + 1 + (page - 1) * page_size,
-                    enroll_month=int(month_str),
+                    enroll_month=int(month_str) if month_str else 0,
                     station_id=it.get("station_id", ""),
                     station_name=f"Station {it.get('station_id', '')}",
                     operator_code=it.get("operator_name", ""),

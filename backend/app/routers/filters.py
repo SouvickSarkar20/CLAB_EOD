@@ -45,10 +45,7 @@ async def get_filter_options(
                 avail_months.append(int(m))
             except (ValueError, TypeError):
                 continue
-        if not avail_months:
-            avail_months = [202609]
-
-        selected_m = month if month in avail_months else (avail_months[0] if avail_months else 202609)
+        selected_m = month if (month and month in avail_months) else None
 
         return FilterOptionsResponse(
             available_months=avail_months,

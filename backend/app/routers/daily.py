@@ -29,7 +29,7 @@ async def get_daily_records(
     _: AdminUser = Depends(require_mfa)
 ):
     """Fetch paginated Daily records with filters from Go microservice (with fallback)."""
-    month_str = str(month) if month else "202607"
+    month_str = str(month) if month else ""
     try:
         data = await GoServiceClient.get_daily_logs(
             month=month_str,
