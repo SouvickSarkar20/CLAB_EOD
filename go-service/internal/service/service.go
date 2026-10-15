@@ -36,14 +36,6 @@ func NewDataService(pool *db.Pool) *DataService {
 	return &DataService{pool: pool}
 }
 
-// TableForMonth resolves the table name. For 202607 it uses EOD_202607, otherwise EODFiles
-func (s *DataService) TableForMonth(month string) string {
-	if month == "202607" {
-		return "EOD_202607"
-	}
-	return "EODFiles"
-}
-
 // ----------------- AUTHENTICATION -----------------
 
 func (s *DataService) Authenticate(ctx context.Context, id, password string) (*models.UserResponse, error) {
