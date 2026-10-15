@@ -58,6 +58,9 @@ func Load() *Config {
 	dbUser := os.Getenv("AZURE_SQL_USER")
 	dbPassword := os.Getenv("AZURE_SQL_PASSWORD")
 	dbDatabase := os.Getenv("AZURE_SQL_DATABASE")
+	if dbDatabase == "" {
+		dbDatabase = "CLAB-EOD"
+	}
 
 	if dbServer == "" || dbUser == "" || dbPassword == "" || dbDatabase == "" {
 		log.Println("[CONFIG WARNING] One or more database credentials (AZURE_SQL_SERVER, AZURE_SQL_USER, AZURE_SQL_PASSWORD, AZURE_SQL_DATABASE) are not set!")
