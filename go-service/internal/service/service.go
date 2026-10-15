@@ -128,47 +128,35 @@ func (s *DataService) GetFilterOptions(ctx context.Context, dmName string) (*mod
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	// ------ 1. Months (EODFiles + static 202607) ------
+	// ------ 1. Months from EODMth ------
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		monthQuery := `SELECT DISTINCT EnrollMth FROM EODFiles WITH (NOLOCK) WHERE EnrollMth IS NOT NULL AND LTRIM(RTRIM(EnrollMth)) <> ''`
-		foundMonths := map[string]bool{"202607": true}
+		monthQuery := `SELECT DISTINCT EnrollMth FROM EODMth WITH (NOLOCK) WHERE EnrollMth IS NOT NULL AND LTRIM(RTRIM(EnrollMth)) <> '' ORDER BY EnrollMth DESC`
 		mRows, err := s.pool.DB.QueryContext(ctx, monthQuery)
 		if err == nil {
 			defer mRows.Close()
+			var months []string
 			for mRows.Next() {
 				var m string
 				if err := mRows.Scan(&m); err == nil && m != "" {
-					foundMonths[m] = true
+					months = append(months, m)
 				}
 			}
+			mu.Lock()
+			opts.Months = months
+			mu.Unlock()
 		}
-		months := make([]string, 0, len(foundMonths))
-		for m := range foundMonths {
-			months = append(months, m)
-		}
-		// Sort descending
-		for i := 0; i < len(months)-1; i++ {
-			for j := i + 1; j < len(months); j++ {
-				if months[i] < months[j] {
-					months[i], months[j] = months[j], months[i]
-				}
-			}
-		}
-		mu.Lock()
-		opts.Months = months
-		mu.Unlock()
 	}()
 
-	// ------ 2. Districts ------
+	// ------ 2. Districts from EODMth ------
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		distQuery := "SELECT DISTINCT District FROM WorkingKIT WITH (NOLOCK) WHERE District IS NOT NULL AND LTRIM(RTRIM(District)) <> ''"
+		distQuery := "SELECT DISTINCT District FROM EODMth WITH (NOLOCK) WHERE District IS NOT NULL AND LTRIM(RTRIM(District)) <> ''"
 		var distArgs []any
 		if dmName != "" {
-			distQuery += " AND DistrictManger = @dmName"
+			distQuery += " AND (DistrictManger = @dmName OR DMID = @dmName)"
 			distArgs = append(distArgs, sql.Named("dmName", dmName))
 		}
 		distQuery += " ORDER BY District"
@@ -178,7 +166,7 @@ func (s *DataService) GetFilterOptions(ctx context.Context, dmName string) (*mod
 			var dists []string
 			for dRows.Next() {
 				var d string
-				if err := dRows.Scan(&d); err == nil {
+				if err := dRows.Scan(&d); err == nil && d != "" {
 					dists = append(dists, d)
 				}
 			}
@@ -188,21 +176,15 @@ func (s *DataService) GetFilterOptions(ctx context.Context, dmName string) (*mod
 		}
 	}()
 
-	// ------ 3. DMs ------
+	// ------ 3. DMs from DMInfo ------
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		dmQuery := `
-			SELECT DISTINCT
-				COALESCE(u.Id, d.DistrictManger) as id,
-				d.DistrictManger as name
-			FROM (
-				SELECT DistrictManger FROM WorkingKIT WITH (NOLOCK) WHERE DistrictManger IS NOT NULL AND LTRIM(RTRIM(DistrictManger)) <> ''
-				UNION
-				SELECT DistrictManager FROM EODDB_Users WITH (NOLOCK) WHERE DistrictManager IS NOT NULL AND LTRIM(RTRIM(DistrictManager)) <> ''
-			) d
-			LEFT JOIN EODDB_Users u WITH (NOLOCK) ON d.DistrictManger = u.DistrictManager
-			ORDER BY name
+			SELECT DM_ID, District_Manager 
+			FROM DMInfo WITH (NOLOCK) 
+			WHERE Role != 'Admin' AND District_Manager IS NOT NULL AND LTRIM(RTRIM(District_Manager)) <> ''
+			ORDER BY TRY_CAST(Sl_No AS INT), District_Manager
 		`
 		dmRows, err := s.pool.DB.QueryContext(ctx, dmQuery)
 		if err == nil {
@@ -220,24 +202,24 @@ func (s *DataService) GetFilterOptions(ctx context.Context, dmName string) (*mod
 		}
 	}()
 
-	// ------ 4. Stations ------
+	// ------ 4. Stations / Operators from EODMth ------
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		stnQuery := "SELECT DISTINCT StationID FROM WorkingKIT WITH (NOLOCK) WHERE StationID IS NOT NULL AND LTRIM(RTRIM(StationID)) <> ''"
+		stnQuery := "SELECT DISTINCT OPERATOR_ID FROM EODMth WITH (NOLOCK) WHERE OPERATOR_ID IS NOT NULL AND LTRIM(RTRIM(OPERATOR_ID)) <> ''"
 		var stnArgs []any
 		if dmName != "" {
-			stnQuery += " AND DistrictManger = @dmName"
+			stnQuery += " AND (DistrictManger = @dmName OR DMID = @dmName)"
 			stnArgs = append(stnArgs, sql.Named("dmName", dmName))
 		}
-		stnQuery += " ORDER BY StationID"
+		stnQuery += " ORDER BY OPERATOR_ID"
 		stnRows, err := s.pool.DB.QueryContext(ctx, stnQuery, stnArgs...)
 		if err == nil {
 			defer stnRows.Close()
 			var stns []string
 			for stnRows.Next() {
 				var sid string
-				if err := stnRows.Scan(&sid); err == nil {
+				if err := stnRows.Scan(&sid); err == nil && sid != "" {
 					stns = append(stns, sid)
 				}
 			}
