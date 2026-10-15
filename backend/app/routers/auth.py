@@ -37,47 +37,47 @@ async def login(
     identifier = payload.email.strip()
     user = None
 
-    # 1. Check EODDB_Users in Azure SQL via Go microservice
-    try:
-        go_user = await GoServiceClient.verify_user(identifier, payload.password)
-        if go_user:
-            stmt = select(AdminUser).where(
-                (AdminUser.dmid == go_user["id"]) | 
-                (AdminUser.name == go_user["district_manager"]) |
-                (AdminUser.email == identifier.lower())
-            )
-            res = await db.execute(stmt)
-            user = res.scalar_one_or_none()
-            if not user:
-                role = UserRole.ADMIN if "admin" in go_user.get("role", "").lower() else UserRole.DISTRICT_MANAGER
-                user = AdminUser(
-                    dmid=go_user["id"],
-                    name=go_user["district_manager"],
-                    email=f"{go_user['id'].lower()}@eod.internal",
-                    password_hash=get_password_hash(payload.password),
-                    role=role,
-                    status=UserStatus.ACTIVE,
-                    is_demo_creds=False
-                )
-                db.add(user)
-                await db.commit()
-                await db.refresh(user)
-    except Exception:
-        pass
-
-    # 2. Fallback to existing AdminUser database credentials
-    if not user:
-        stmt = select(AdminUser).where(
-            (AdminUser.email == identifier.lower()) | (AdminUser.dmid == identifier)
+    # Authenticate strictly against DMInfo in CLAB-EOD via Go microservice
+    go_user = await GoServiceClient.verify_user(identifier, payload.password)
+    if not go_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials. Please check your username/ID and password."
         )
-        res = await db.execute(stmt)
-        user = res.scalar_one_or_none()
 
-        if not user or not verify_password(payload.password, user.password_hash):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials. Please check your username/email and password."
-            )
+    # Determine role based on DMInfo Role field
+    role = UserRole.ADMIN if "admin" in go_user.get("role", "").lower() else UserRole.DISTRICT_MANAGER
+
+    # Sync user session record
+    stmt = select(AdminUser).where(
+        (AdminUser.dmid == go_user["id"]) | 
+        (AdminUser.name == go_user["district_manager"]) |
+        (AdminUser.email == identifier.lower())
+    )
+    res = await db.execute(stmt)
+    user = res.scalar_one_or_none()
+
+    if not user:
+        user = AdminUser(
+            dmid=go_user["id"],
+            name=go_user["district_manager"],
+            email=f"{go_user['id'].lower()}@eod.internal",
+            password_hash=get_password_hash(payload.password),
+            role=role,
+            status=UserStatus.ACTIVE,
+            is_demo_creds=False
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    else:
+        # Keep role and name in sync with DMInfo in CLAB-EOD
+        user.role = role
+        user.name = go_user["district_manager"]
+        user.status = UserStatus.ACTIVE
+        user.is_demo_creds = False
+        await db.commit()
+        await db.refresh(user)
 
     if user.status != UserStatus.ACTIVE:
         raise HTTPException(

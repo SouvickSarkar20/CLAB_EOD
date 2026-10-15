@@ -46,10 +46,16 @@ func (s *DataService) TableForMonth(month string) string {
 // ----------------- AUTHENTICATION -----------------
 
 func (s *DataService) Authenticate(ctx context.Context, id, password string) (*models.UserResponse, error) {
+	id = strings.TrimSpace(id)
+	password = strings.TrimSpace(password)
+
 	query := `
-		SELECT Id, DistrictManager, Role 
-		FROM EODDB_Users 
-		WHERE Id = @id AND Password = @password
+		SELECT DM_ID, District_Manager, Role 
+		FROM DMInfo 
+		WHERE (LTRIM(RTRIM(DM_ID)) = @id 
+		    OR LTRIM(RTRIM(District_Manager)) = @id 
+		    OR LTRIM(RTRIM(Mail_ID)) = @id)
+		  AND LTRIM(RTRIM(Password)) = @password
 	`
 	var user models.UserResponse
 	err := s.pool.DB.QueryRowContext(ctx, query, sql.Named("id", id), sql.Named("password", password)).
@@ -64,10 +70,11 @@ func (s *DataService) Authenticate(ctx context.Context, id, password string) (*m
 }
 
 func (s *DataService) GetUserByID(ctx context.Context, id string) (*models.UserResponse, error) {
+	id = strings.TrimSpace(id)
 	query := `
-		SELECT Id, DistrictManager, Role 
-		FROM EODDB_Users 
-		WHERE Id = @id
+		SELECT DM_ID, District_Manager, Role 
+		FROM DMInfo 
+		WHERE LTRIM(RTRIM(DM_ID)) = @id OR LTRIM(RTRIM(District_Manager)) = @id
 	`
 	var user models.UserResponse
 	err := s.pool.DB.QueryRowContext(ctx, query, sql.Named("id", id)).
@@ -79,7 +86,12 @@ func (s *DataService) GetUserByID(ctx context.Context, id string) (*models.UserR
 }
 
 func (s *DataService) ListUsers(ctx context.Context) ([]models.UserResponse, error) {
-	rows, err := s.pool.DB.QueryContext(ctx, "SELECT Id, DistrictManager, Role FROM EODDB_Users ORDER BY Id")
+	query := `
+		SELECT DM_ID, District_Manager, Role 
+		FROM DMInfo 
+		ORDER BY TRY_CAST(Sl_No AS INT), DM_ID
+	`
+	rows, err := s.pool.DB.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
