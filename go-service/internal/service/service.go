@@ -481,7 +481,6 @@ func (s *DataService) GetDailyLogs(ctx context.Context, month, dmName, district,
 		pageSize = 25
 	}
 	offset := (page - 1) * pageSize
-	table := s.TableForMonth(month)
 
 	var whereClauses []string
 	var args []any
@@ -491,7 +490,7 @@ func (s *DataService) GetDailyLogs(ctx context.Context, month, dmName, district,
 		args = append(args, sql.Named("month", month))
 	}
 	if dmName != "" {
-		whereClauses = append(whereClauses, "DistrictManger = @dmName")
+		whereClauses = append(whereClauses, "(DistrictManger = @dmName OR DMID = @dmName)")
 		args = append(args, sql.Named("dmName", dmName))
 	}
 	if district != "" {
@@ -499,12 +498,13 @@ func (s *DataService) GetDailyLogs(ctx context.Context, month, dmName, district,
 		args = append(args, sql.Named("district", district))
 	}
 	if stationID != "" {
-		whereClauses = append(whereClauses, "StationID = @stationID")
+		whereClauses = append(whereClauses, "OPERATOR_ID = @stationID")
 		args = append(args, sql.Named("stationID", stationID))
 	}
-	if enrollDT != "" {
-		whereClauses = append(whereClauses, "EnrollDT = @enrollDT")
-		args = append(args, sql.Named("enrollDT", enrollDT))
+	cleanDT := strings.ReplaceAll(strings.TrimSpace(enrollDT), "-", "")
+	if cleanDT != "" {
+		whereClauses = append(whereClauses, "EnnollDt = @enrollDT")
+		args = append(args, sql.Named("enrollDT", cleanDT))
 	}
 
 	whereSQL := ""
@@ -512,71 +512,95 @@ func (s *DataService) GetDailyLogs(ctx context.Context, month, dmName, district,
 		whereSQL = " WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
-	// Rollup query with WITH (NOLOCK)
-	rollupQuery := fmt.Sprintf(`
-		SELECT 
-			EnrollDT,
-			StationID,
-			COALESCE(OperatorName, 'N/A'),
-			COALESCE(MAX(District), 'N/A'),
-			COALESCE(MAX(DistrictManger), 'N/A'),
-			COUNT(*) as total_enrollment,
-			COALESCE(SUM(TRY_CAST(TOTAL_AMOUNT_CHARGED AS decimal(10,2))), 0) as total_amount,
-			SUM(CASE WHEN UpdateType LIKE 'BMU%%100%%' THEN 1 ELSE 0 END) as bmu_100,
-			SUM(CASE WHEN UpdateType LIKE 'BMU%%125%%' THEN 1 ELSE 0 END) as bmu_125,
-			SUM(CASE WHEN UpdateType LIKE 'DMU%%50%%' THEN 1 ELSE 0 END) as dmu_50,
-			SUM(CASE WHEN UpdateType LIKE 'DMU%%75%%' THEN 1 ELSE 0 END) as dmu_75,
-			SUM(CASE WHEN UpdateType LIKE 'MBU%%0%%' THEN 1 ELSE 0 END) as mbu_0,
-			SUM(CASE WHEN UpdateType LIKE 'MBU%%100%%' THEN 1 ELSE 0 END) as mbu_100,
-			SUM(CASE WHEN UpdateType LIKE 'MBU%%125%%' THEN 1 ELSE 0 END) as mbu_125,
-			SUM(CASE WHEN TYPE = 'N' OR UpdateType LIKE 'NEW%%' THEN 1 ELSE 0 END) as new_0
-		FROM [%s] WITH (NOLOCK)
-		%s
-		GROUP BY EnrollDT, StationID, OperatorName
-		ORDER BY EnrollDT DESC, total_enrollment DESC
-		OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
-	`, table, whereSQL)
-
-	argsWithPaging := append(args, sql.Named("offset", offset), sql.Named("pageSize", pageSize))
-	rows, err := s.pool.DB.QueryContext(ctx, rollupQuery, argsWithPaging...)
-	if err != nil {
-		return nil, fmt.Errorf("error querying daily logs: %w", err)
-	}
-	defer rows.Close()
-
+	var wg sync.WaitGroup
+	var queryErr error
+	var countErr error
+	var totalCount int
 	items := []models.DailyRecordItem{}
-	for rows.Next() {
-		var item models.DailyRecordItem
-		err := rows.Scan(
-			&item.EnrollDate,
-			&item.StationID,
-			&item.OperatorName,
-			&item.District,
-			&item.DistrictManager,
-			&item.TotalEnrollment,
-			&item.TotalAmount,
-			&item.BMU100,
-			&item.BMU125,
-			&item.DMU50,
-			&item.DMU75,
-			&item.MBU0,
-			&item.MBU100,
-			&item.MBU125,
-			&item.New0,
-		)
-		if err == nil {
-			if len(item.EnrollDate) == 8 {
-				item.EnrollDate = fmt.Sprintf("%s-%s-%s", item.EnrollDate[0:4], item.EnrollDate[4:6], item.EnrollDate[6:8])
-			}
-			items = append(items, item)
+
+	// 1. Total Count Query
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		countSQL := fmt.Sprintf("SELECT COUNT(*) FROM EODDt WITH (NOLOCK) %s", whereSQL)
+		countErr = s.pool.DB.QueryRowContext(ctx, countSQL, args...).Scan(&totalCount)
+	}()
+
+	// 2. Data Query
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		dataSQL := fmt.Sprintf(`
+			SELECT 
+				EnnollDt,
+				OPERATOR_ID,
+				COALESCE(OperatorName, 'N/A'),
+				COALESCE(District, 'N/A'),
+				COALESCE(DistrictManger, 'N/A'),
+				COALESCE(TRY_CAST(Total_Enrollment AS INT), 0),
+				COALESCE(TRY_CAST(Total_amount AS FLOAT), 0),
+				COALESCE(TRY_CAST(BMU_100 AS INT), 0),
+				COALESCE(TRY_CAST(BMU_125 AS INT), 0),
+				COALESCE(TRY_CAST(DMU_50 AS INT), 0),
+				COALESCE(TRY_CAST(DMU_75 AS INT), 0),
+				COALESCE(TRY_CAST(MBU_0 AS INT), 0),
+				COALESCE(TRY_CAST(MBU_100 AS INT), 0),
+				COALESCE(TRY_CAST(MBU_125 AS INT), 0),
+				COALESCE(TRY_CAST(NEW_0 AS INT), 0)
+			FROM EODDt WITH (NOLOCK)
+			%s
+			ORDER BY EnnollDt DESC, OPERATOR_ID ASC
+			OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+		`, whereSQL)
+
+		argsWithPaging := append(append([]any{}, args...), sql.Named("offset", offset), sql.Named("pageSize", pageSize))
+		rows, err := s.pool.DB.QueryContext(ctx, dataSQL, argsWithPaging...)
+		if err != nil {
+			queryErr = err
+			return
 		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var item models.DailyRecordItem
+			err := rows.Scan(
+				&item.EnrollDate,
+				&item.StationID,
+				&item.OperatorName,
+				&item.District,
+				&item.DistrictManager,
+				&item.TotalEnrollment,
+				&item.TotalAmount,
+				&item.BMU100,
+				&item.BMU125,
+				&item.DMU50,
+				&item.DMU75,
+				&item.MBU0,
+				&item.MBU100,
+				&item.MBU125,
+				&item.New0,
+			)
+			if err == nil {
+				if len(item.EnrollDate) == 8 {
+					item.EnrollDate = fmt.Sprintf("%s-%s-%s", item.EnrollDate[0:4], item.EnrollDate[4:6], item.EnrollDate[6:8])
+				}
+				items = append(items, item)
+			}
+		}
+	}()
+
+	wg.Wait()
+
+	if queryErr != nil {
+		return nil, fmt.Errorf("error querying daily logs: %w", queryErr)
 	}
 
-	totalCount := len(items)
-	if totalCount == pageSize {
-		totalCount = page * pageSize + 1
-	} else {
-		totalCount = (page - 1) * pageSize + len(items)
+	if countErr != nil || totalCount == 0 {
+		if len(items) == pageSize {
+			totalCount = page*pageSize + 1
+		} else {
+			totalCount = (page-1)*pageSize + len(items)
+		}
 	}
 
 	return &models.PaginatedDailyResponse{
