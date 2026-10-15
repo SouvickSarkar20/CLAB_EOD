@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -752,7 +753,7 @@ func (s *DataService) GetMonthlyRecords(ctx context.Context, month, dmName, dist
 	}, nil
 }
 
-// BulkInsertRecords inserts an array of RawEODRecord rows into EODFiles
+// BulkInsertRecords aggregates uploaded raw records and upserts them into EODDt and EODMth
 func (s *DataService) BulkInsertRecords(ctx context.Context, records []models.RawEODRecord) (*models.BulkInsertResponse, error) {
 	if len(records) == 0 {
 		return &models.BulkInsertResponse{
@@ -762,83 +763,362 @@ func (s *DataService) BulkInsertRecords(ctx context.Context, records []models.Ra
 		}, nil
 	}
 
+	// 1. Fetch DM map (District_Manager -> DM_ID) from DMInfo for accurate DMID resolution
+	dmMap := make(map[string]string)
+	dmRows, err := s.pool.DB.QueryContext(ctx, "SELECT District_Manager, DM_ID FROM DMInfo WITH (NOLOCK) WHERE District_Manager IS NOT NULL")
+	if err == nil {
+		defer dmRows.Close()
+		for dmRows.Next() {
+			var name, id string
+			if err := dmRows.Scan(&name, &id); err == nil {
+				dmMap[strings.ToLower(strings.TrimSpace(name))] = id
+			}
+		}
+	}
+
+	type aggItem struct {
+		EnrollMth       string
+		EnnollDt        string
+		District        string
+		DistrictManager string
+		OperatorID      string
+		OperatorName    string
+		DMID            string
+		TotalEnrollment int
+		TotalAmount     float64
+		BMU100          int
+		BMU125          int
+		MBU0            int
+		MBU100          int
+		MBU125          int
+		DMU50           int
+		DMU75           int
+		New0            int
+	}
+
+	dailyMap := make(map[string]*aggItem)
+	monthlyMap := make(map[string]*aggItem)
+
+	for _, r := range records {
+		enrollDT := strings.ReplaceAll(strings.TrimSpace(r.EnrollDT), "-", "")
+		if len(enrollDT) < 8 {
+			cand := strings.ReplaceAll(strings.TrimSpace(r.EnrolmentNoDate), "-", "")
+			if len(cand) >= 8 {
+				enrollDT = cand[:8]
+			}
+		}
+
+		enrollMth := strings.TrimSpace(r.EnrollMth)
+		if enrollMth == "" && len(enrollDT) >= 6 {
+			enrollMth = enrollDT[:6]
+		}
+
+		opID := strings.TrimSpace(r.OperatorID)
+		if opID == "" {
+			opID = strings.TrimSpace(r.StationID)
+		}
+		if opID == "" {
+			continue
+		}
+
+		opName := strings.TrimSpace(r.OperatorName)
+		if opName == "" {
+			opName = opID
+		}
+
+		dist := strings.TrimSpace(r.District)
+		if dist == "" {
+			dist = "Unknown"
+		}
+
+		dm := strings.TrimSpace(r.DistrictManger)
+		dmid := ""
+		if dm != "" {
+			if id, ok := dmMap[strings.ToLower(dm)]; ok {
+				dmid = id
+			}
+		}
+
+		var amount float64
+		if r.TotalAmountCharged != "" {
+			if a, err := strconv.ParseFloat(strings.TrimSpace(r.TotalAmountCharged), 64); err == nil {
+				amount = a
+			}
+		}
+
+		uType := strings.ToUpper(strings.TrimSpace(r.UpdateType))
+		rType := strings.ToUpper(strings.TrimSpace(r.Type))
+
+		var bmu100, bmu125, dmu50, dmu75, mbu0, mbu100, mbu125, new0 int
+		if strings.Contains(uType, "BMU") && strings.Contains(uType, "100") {
+			bmu100 = 1
+		} else if strings.Contains(uType, "BMU") && strings.Contains(uType, "125") {
+			bmu125 = 1
+		} else if strings.Contains(uType, "DMU") && strings.Contains(uType, "50") {
+			dmu50 = 1
+		} else if strings.Contains(uType, "DMU") && strings.Contains(uType, "75") {
+			dmu75 = 1
+		} else if strings.Contains(uType, "MBU") && strings.Contains(uType, "0") && !strings.Contains(uType, "100") && !strings.Contains(uType, "125") {
+			mbu0 = 1
+		} else if strings.Contains(uType, "MBU") && strings.Contains(uType, "100") {
+			mbu100 = 1
+		} else if strings.Contains(uType, "MBU") && strings.Contains(uType, "125") {
+			mbu125 = 1
+		} else if rType == "N" || strings.Contains(uType, "NEW") {
+			new0 = 1
+		} else {
+			dmu50 = 1
+		}
+
+		// Aggregate into Daily
+		dailyKey := enrollDT + "|" + opID
+		if item, exists := dailyMap[dailyKey]; exists {
+			item.TotalEnrollment++
+			item.TotalAmount += amount
+			item.BMU100 += bmu100
+			item.BMU125 += bmu125
+			item.DMU50 += dmu50
+			item.DMU75 += dmu75
+			item.MBU0 += mbu0
+			item.MBU100 += mbu100
+			item.MBU125 += mbu125
+			item.New0 += new0
+			if item.District == "Unknown" && dist != "Unknown" {
+				item.District = dist
+			}
+			if item.DistrictManager == "" && dm != "" {
+				item.DistrictManager = dm
+				item.DMID = dmid
+			}
+		} else {
+			dailyMap[dailyKey] = &aggItem{
+				EnrollMth:       enrollMth,
+				EnnollDt:        enrollDT,
+				District:        dist,
+				DistrictManager: dm,
+				OperatorID:      opID,
+				OperatorName:    opName,
+				DMID:            dmid,
+				TotalEnrollment: 1,
+				TotalAmount:     amount,
+				BMU100:          bmu100,
+				BMU125:          bmu125,
+				MBU0:            mbu0,
+				MBU100:          mbu100,
+				MBU125:          mbu125,
+				DMU50:           dmu50,
+				DMU75:           dmu75,
+				New0:            new0,
+			}
+		}
+
+		// Aggregate into Monthly
+		monthlyKey := enrollMth + "|" + opID
+		if item, exists := monthlyMap[monthlyKey]; exists {
+			item.TotalEnrollment++
+			item.TotalAmount += amount
+			item.BMU100 += bmu100
+			item.BMU125 += bmu125
+			item.DMU50 += dmu50
+			item.DMU75 += dmu75
+			item.MBU0 += mbu0
+			item.MBU100 += mbu100
+			item.MBU125 += mbu125
+			item.New0 += new0
+			if item.District == "Unknown" && dist != "Unknown" {
+				item.District = dist
+			}
+			if item.DistrictManager == "" && dm != "" {
+				item.DistrictManager = dm
+				item.DMID = dmid
+			}
+		} else {
+			monthlyMap[monthlyKey] = &aggItem{
+				EnrollMth:       enrollMth,
+				District:        dist,
+				DistrictManager: dm,
+				OperatorID:      opID,
+				OperatorName:    opName,
+				DMID:            dmid,
+				TotalEnrollment: 1,
+				TotalAmount:     amount,
+				BMU100:          bmu100,
+				BMU125:          bmu125,
+				MBU0:            mbu0,
+				MBU100:          mbu100,
+				MBU125:          mbu125,
+				DMU50:           dmu50,
+				DMU75:           dmu75,
+				New0:            new0,
+			}
+		}
+	}
+
 	tx, err := s.pool.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	insertSQL := `
-		INSERT INTO EODFiles (
-			SLNO, ENROLMENT_NO_DATE, APPOINTMENT_ID, TYPE, MANDATORY_BIO_METRIC_UPDATE_ONLY,
-			IS_NRI, TIN_NO, OPERATOR_ID, INTRODUCER, PROOF, RESIDENT_NAME, STATUS,
-			GST_AMOUNT, AMOUNT_CHARGED_FOR_NEW_ENROLMENT, AMOUNT_CHARGED_FOR_UPDATE_ENROLMENT,
-			TOTAL_AMOUNT_CHARGED, PROCESSING_STATE_DESCRIPTION, REJECT_REASON_DESCRIPTION,
-			PACKET_SKIPPED, FOREIGN_RESIDENT, StationID, EnrollDT, EnrollMth, UpdateType,
-			DistrictManger, District, OperatorName, StationType
-		) VALUES (
-			@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10, @p11, @p12,
-			@p13, @p14, @p15, @p16, @p17, @p18, @p19, @p20, @p21, @p22, @p23,
-			@p24, @p25, @p26, @p27, @p28
-		)
+	// 2. Upsert Daily Aggregates into EODDt
+	mergeDtSQL := `
+		MERGE EODDt WITH (HOLDLOCK) AS target
+		USING (SELECT 
+			@EnrollMth AS EnrollMth, 
+			@EnnollDt AS EnnollDt, 
+			@District AS District, 
+			@DistrictManger AS DistrictManger, 
+			@OPERATOR_ID AS OPERATOR_ID, 
+			@OperatorName AS OperatorName, 
+			@DMID AS DMID, 
+			@Enrollment AS Total_Enrollment, 
+			@Amount AS Total_amount, 
+			@BMU100 AS BMU_100, 
+			@BMU125 AS BMU_125, 
+			@MBU0 AS MBU_0, 
+			@MBU100 AS MBU_100, 
+			@MBU125 AS MBU_125, 
+			@DMU50 AS DMU_50, 
+			@DMU75 AS DMU_75, 
+			@NEW0 AS NEW_0
+		) AS src
+		ON (target.EnnollDt = src.EnnollDt AND target.OPERATOR_ID = src.OPERATOR_ID)
+		WHEN MATCHED THEN
+			UPDATE SET 
+				target.Total_Enrollment = CAST((COALESCE(TRY_CAST(target.Total_Enrollment AS INT), 0) + src.Total_Enrollment) AS NVARCHAR(12)),
+				target.Total_amount = CAST((COALESCE(TRY_CAST(target.Total_amount AS FLOAT), 0) + src.Total_amount) AS NVARCHAR(12)),
+				target.BMU_100 = CAST((COALESCE(TRY_CAST(target.BMU_100 AS INT), 0) + src.BMU_100) AS NVARCHAR(10)),
+				target.BMU_125 = CAST((COALESCE(TRY_CAST(target.BMU_125 AS INT), 0) + src.BMU_125) AS NVARCHAR(10)),
+				target.MBU_0 = CAST((COALESCE(TRY_CAST(target.MBU_0 AS INT), 0) + src.MBU_0) AS NVARCHAR(10)),
+				target.MBU_100 = CAST((COALESCE(TRY_CAST(target.MBU_100 AS INT), 0) + src.MBU_100) AS NVARCHAR(10)),
+				target.MBU_125 = CAST((COALESCE(TRY_CAST(target.MBU_125 AS INT), 0) + src.MBU_125) AS NVARCHAR(10)),
+				target.DMU_50 = CAST((COALESCE(TRY_CAST(target.DMU_50 AS INT), 0) + src.DMU_50) AS NVARCHAR(10)),
+				target.DMU_75 = CAST((COALESCE(TRY_CAST(target.DMU_75 AS INT), 0) + src.DMU_75) AS NVARCHAR(10)),
+				target.NEW_0 = CAST((COALESCE(TRY_CAST(target.NEW_0 AS INT), 0) + src.NEW_0) AS NVARCHAR(10)),
+				target.District = COALESCE(NULLIF(src.District, ''), target.District),
+				target.DistrictManger = COALESCE(NULLIF(src.DistrictManger, ''), target.DistrictManger),
+				target.OperatorName = COALESCE(NULLIF(src.OperatorName, ''), target.OperatorName),
+				target.DMID = COALESCE(NULLIF(src.DMID, ''), target.DMID)
+		WHEN NOT MATCHED THEN
+			INSERT (EnrollMth, EnnollDt, District, DistrictManger, OPERATOR_ID, OperatorName, Total_Enrollment, Total_amount, BMU_100, BMU_125, MBU_0, MBU_100, MBU_125, DMU_50, DMU_75, NEW_0, DMID)
+			VALUES (src.EnrollMth, src.EnnollDt, src.District, src.DistrictManger, src.OPERATOR_ID, src.OperatorName, CAST(src.Total_Enrollment AS NVARCHAR(12)), CAST(src.Total_amount AS NVARCHAR(12)), CAST(src.BMU_100 AS NVARCHAR(10)), CAST(src.BMU_125 AS NVARCHAR(10)), CAST(src.MBU_0 AS NVARCHAR(10)), CAST(src.MBU_100 AS NVARCHAR(10)), CAST(src.MBU_125 AS NVARCHAR(10)), CAST(src.DMU_50 AS NVARCHAR(10)), CAST(src.DMU_75 AS NVARCHAR(10)), CAST(src.NEW_0 AS NVARCHAR(10)), src.DMID);
 	`
-	stmt, err := tx.PrepareContext(ctx, insertSQL)
+	dtStmt, err := tx.PrepareContext(ctx, mergeDtSQL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to prepare insert statement: %w", err)
+		return nil, fmt.Errorf("failed to prepare EODDt merge statement: %w", err)
 	}
-	defer stmt.Close()
+	defer dtStmt.Close()
 
-	insertedCount := 0
-	for _, r := range records {
-		_, err := stmt.ExecContext(ctx,
-			r.SLNO,
-			r.EnrolmentNoDate,
-			r.AppointmentID,
-			r.Type,
-			r.MandatoryBioMetricUpdateOnly,
-			r.IsNRI,
-			r.TinNo,
-			r.OperatorID,
-			r.Introducer,
-			r.Proof,
-			r.ResidentName,
-			r.Status,
-			r.GstAmount,
-			r.AmountChargedForNewEnrolment,
-			r.AmountChargedForUpdateEnrolment,
-			r.TotalAmountCharged,
-			r.ProcessingStateDescription,
-			r.RejectReasonDescription,
-			r.PacketSkipped,
-			r.ForeignResident,
-			r.StationID,
-			r.EnrollDT,
-			r.EnrollMth,
-			r.UpdateType,
-			r.DistrictManger,
-			r.District,
-			r.OperatorName,
-			r.StationType,
+	for _, it := range dailyMap {
+		_, err := dtStmt.ExecContext(ctx,
+			sql.Named("EnrollMth", it.EnrollMth),
+			sql.Named("EnnollDt", it.EnnollDt),
+			sql.Named("District", it.District),
+			sql.Named("DistrictManger", it.DistrictManager),
+			sql.Named("OPERATOR_ID", it.OperatorID),
+			sql.Named("OperatorName", it.OperatorName),
+			sql.Named("DMID", it.DMID),
+			sql.Named("Enrollment", it.TotalEnrollment),
+			sql.Named("Amount", it.TotalAmount),
+			sql.Named("BMU100", it.BMU100),
+			sql.Named("BMU125", it.BMU125),
+			sql.Named("MBU0", it.MBU0),
+			sql.Named("MBU100", it.MBU100),
+			sql.Named("MBU125", it.MBU125),
+			sql.Named("DMU50", it.DMU50),
+			sql.Named("DMU75", it.DMU75),
+			sql.Named("NEW0", it.New0),
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed inserting record %s: %w", r.EnrolmentNoDate, err)
+			return nil, fmt.Errorf("failed merging into EODDt for %s/%s: %w", it.EnnollDt, it.OperatorID, err)
 		}
-		insertedCount++
+	}
+
+	// 3. Upsert Monthly Aggregates into EODMth
+	mergeMthSQL := `
+		MERGE EODMth WITH (HOLDLOCK) AS target
+		USING (SELECT 
+			@EnrollMth AS EnrollMth, 
+			@District AS District, 
+			@DistrictManger AS DistrictManger, 
+			@OPERATOR_ID AS OPERATOR_ID, 
+			@OperatorName AS OperatorName, 
+			@DMID AS DMID, 
+			@Enrollment AS Total_Enrollment, 
+			@Amount AS Total_amount, 
+			@BMU100 AS BMU_100, 
+			@BMU125 AS BMU_125, 
+			@MBU0 AS MBU_0, 
+			@MBU100 AS MBU_100, 
+			@MBU125 AS MBU_125, 
+			@DMU50 AS DMU_50, 
+			@DMU75 AS DMU_75, 
+			@NEW0 AS NEW_0
+		) AS src
+		ON (target.EnrollMth = src.EnrollMth AND target.OPERATOR_ID = src.OPERATOR_ID)
+		WHEN MATCHED THEN
+			UPDATE SET 
+				target.Total_Enrollment = CAST((COALESCE(TRY_CAST(target.Total_Enrollment AS INT), 0) + src.Total_Enrollment) AS NVARCHAR(10)),
+				target.Total_amount = CAST((COALESCE(TRY_CAST(target.Total_amount AS FLOAT), 0) + src.Total_amount) AS NVARCHAR(10)),
+				target.BMU_100 = CAST((COALESCE(TRY_CAST(target.BMU_100 AS INT), 0) + src.BMU_100) AS NVARCHAR(10)),
+				target.BMU_125 = CAST((COALESCE(TRY_CAST(target.BMU_125 AS INT), 0) + src.BMU_125) AS NVARCHAR(10)),
+				target.MBU_0 = CAST((COALESCE(TRY_CAST(target.MBU_0 AS INT), 0) + src.MBU_0) AS NVARCHAR(10)),
+				target.MBU_100 = CAST((COALESCE(TRY_CAST(target.MBU_100 AS INT), 0) + src.MBU_100) AS NVARCHAR(10)),
+				target.MBU_125 = CAST((COALESCE(TRY_CAST(target.MBU_125 AS INT), 0) + src.MBU_125) AS NVARCHAR(10)),
+				target.DMU_50 = CAST((COALESCE(TRY_CAST(target.DMU_50 AS INT), 0) + src.DMU_50) AS NVARCHAR(10)),
+				target.DMU_75 = CAST((COALESCE(TRY_CAST(target.DMU_75 AS INT), 0) + src.DMU_75) AS NVARCHAR(10)),
+				target.NEW_0 = CAST((COALESCE(TRY_CAST(target.NEW_0 AS INT), 0) + src.NEW_0) AS NVARCHAR(10)),
+				target.District = COALESCE(NULLIF(src.District, ''), target.District),
+				target.DistrictManger = COALESCE(NULLIF(src.DistrictManger, ''), target.DistrictManger),
+				target.OperatorName = COALESCE(NULLIF(src.OperatorName, ''), target.OperatorName),
+				target.DMID = COALESCE(NULLIF(src.DMID, ''), target.DMID)
+		WHEN NOT MATCHED THEN
+			INSERT (EnrollMth, District, DistrictManger, OPERATOR_ID, OperatorName, Total_Enrollment, Total_amount, BMU_100, BMU_125, MBU_0, MBU_100, MBU_125, DMU_50, DMU_75, NEW_0, DMID)
+			VALUES (src.EnrollMth, src.District, src.DistrictManger, src.OPERATOR_ID, src.OperatorName, CAST(src.Total_Enrollment AS NVARCHAR(10)), CAST(src.Total_amount AS NVARCHAR(10)), CAST(src.BMU_100 AS NVARCHAR(10)), CAST(src.BMU_125 AS NVARCHAR(10)), CAST(src.MBU_0 AS NVARCHAR(10)), CAST(src.MBU_100 AS NVARCHAR(10)), CAST(src.MBU_125 AS NVARCHAR(10)), CAST(src.DMU_50 AS NVARCHAR(10)), CAST(src.DMU_75 AS NVARCHAR(10)), CAST(src.NEW_0 AS NVARCHAR(10)), src.DMID);
+	`
+	mthStmt, err := tx.PrepareContext(ctx, mergeMthSQL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare EODMth merge statement: %w", err)
+	}
+	defer mthStmt.Close()
+
+	for _, it := range monthlyMap {
+		_, err := mthStmt.ExecContext(ctx,
+			sql.Named("EnrollMth", it.EnrollMth),
+			sql.Named("District", it.District),
+			sql.Named("DistrictManger", it.DistrictManager),
+			sql.Named("OPERATOR_ID", it.OperatorID),
+			sql.Named("OperatorName", it.OperatorName),
+			sql.Named("DMID", it.DMID),
+			sql.Named("Enrollment", it.TotalEnrollment),
+			sql.Named("Amount", it.TotalAmount),
+			sql.Named("BMU100", it.BMU100),
+			sql.Named("BMU125", it.BMU125),
+			sql.Named("MBU0", it.MBU0),
+			sql.Named("MBU100", it.MBU100),
+			sql.Named("MBU125", it.MBU125),
+			sql.Named("DMU50", it.DMU50),
+			sql.Named("DMU75", it.DMU75),
+			sql.Named("NEW0", it.New0),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed merging into EODMth for %s/%s: %w", it.EnrollMth, it.OperatorID, err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// Invalidate filter cache so newly inserted month appears immediately
+	// Invalidate filter cache so dropdowns and statistics immediately reflect newly inserted month/data
 	globalFilterCache.mu.Lock()
 	globalFilterCache.entries = make(map[string]filterCacheEntry)
 	globalFilterCache.mu.Unlock()
 
 	return &models.BulkInsertResponse{
 		Success:       true,
-		InsertedCount: insertedCount,
-		Message:       fmt.Sprintf("Successfully inserted %d records into database", insertedCount),
+		InsertedCount: len(records),
+		Message:       fmt.Sprintf("Successfully processed %d records into EODDt and rolled up into EODMth", len(records)),
 	}, nil
 }
 
