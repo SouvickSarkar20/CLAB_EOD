@@ -5,6 +5,7 @@ set -e
 export GO_PORT=${GO_PORT:-8081}
 export PORT=${PORT:-8000}
 export GO_SERVICE_URL="http://127.0.0.1:${GO_PORT}"
+export INTERNAL_API_SECRET="${INTERNAL_API_SECRET:-clab-internal-secret-change-in-production-2026}"
 
 echo "=========================================="
 echo " Starting Unified Deployment Container"

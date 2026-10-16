@@ -8,12 +8,13 @@ import (
 )
 
 type Config struct {
-	ServerPort string
-	DBServer   string
-	DBPort     string
-	DBUser     string
-	DBPassword string
-	DBDatabase string
+	ServerPort     string
+	DBServer       string
+	DBPort         string
+	DBUser         string
+	DBPassword     string
+	DBDatabase     string
+	InternalSecret string
 }
 
 // loadDotEnv reads key=value pairs from .env if present and sets them in os.Environ
@@ -66,12 +67,22 @@ func Load() *Config {
 		log.Println("[CONFIG WARNING] One or more database credentials (AZURE_SQL_SERVER, AZURE_SQL_USER, AZURE_SQL_PASSWORD, AZURE_SQL_DATABASE) are not set!")
 	}
 
+	internalSecret := os.Getenv("INTERNAL_API_SECRET")
+	if internalSecret == "" {
+		internalSecret = os.Getenv("GO_SERVICE_SECRET")
+	}
+	if internalSecret == "" {
+		internalSecret = "clab-internal-secret-change-in-production-2026"
+		log.Println("[SECURITY NOTICE] INTERNAL_API_SECRET is not set; running with default internal secret. Configure INTERNAL_API_SECRET in production!")
+	}
+
 	return &Config{
-		ServerPort: port,
-		DBServer:   dbServer,
-		DBPort:     dbPort,
-		DBUser:     dbUser,
-		DBPassword: dbPassword,
-		DBDatabase: dbDatabase,
+		ServerPort:     port,
+		DBServer:       dbServer,
+		DBPort:         dbPort,
+		DBUser:         dbUser,
+		DBPassword:     dbPassword,
+		DBDatabase:     dbDatabase,
+		InternalSecret: internalSecret,
 	}
 }

@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,7 +25,7 @@ func withMiddleware(next http.Handler) http.Handler {
 
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Internal-Secret")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -31,6 +34,44 @@ func withMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 		log.Printf("[%s] %s -> completed in %v", r.Method, r.URL.Path, time.Since(start))
+	})
+}
+
+// requireInternalSecret validates that requests to internal API endpoints carry the shared internal secret
+func requireInternalSecret(secret string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Allow CORS preflights
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Health check probe endpoint is always open for container/k8s readiness & liveness probes
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Check for X-Internal-Secret header or Bearer token Authorization header
+		reqSecret := r.Header.Get("X-Internal-Secret")
+		if reqSecret == "" {
+			authHeader := r.Header.Get("Authorization")
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				reqSecret = strings.TrimPrefix(authHeader, "Bearer ")
+			}
+		}
+
+		// Constant-time comparison to prevent timing attacks
+		if reqSecret == "" || subtle.ConstantTimeCompare([]byte(reqSecret), []byte(secret)) != 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "Unauthorized: invalid or missing internal API secret",
+			})
+			return
+		}
+
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -64,7 +105,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:         ":" + cfg.ServerPort,
-		Handler:      withMiddleware(mux),
+		Handler:      withMiddleware(requireInternalSecret(cfg.InternalSecret, mux)),
 		ReadTimeout:  60 * time.Second,
 		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  120 * time.Second,

@@ -28,8 +28,14 @@ class GoServiceClient:
                 write=30.0,
                 pool=5.0
             )
+            headers = {}
+            secret = getattr(settings, "INTERNAL_API_SECRET", "")
+            if secret:
+                headers["X-Internal-Secret"] = secret
+
             cls._client = httpx.AsyncClient(
                 base_url=cls.base_url(),
+                headers=headers,
                 limits=limits,
                 timeout=timeout
             )
