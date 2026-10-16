@@ -62,7 +62,7 @@ func requireInternalSecret(secret string, next http.Handler) http.Handler {
 		}
 
 		// Constant-time comparison to prevent timing attacks
-		if reqSecret == "" || subtle.ConstantTimeCompare([]byte(reqSecret), []byte(secret)) != 1 {
+		if secret == "" || reqSecret == "" || subtle.ConstantTimeCompare([]byte(reqSecret), []byte(secret)) != 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]string{

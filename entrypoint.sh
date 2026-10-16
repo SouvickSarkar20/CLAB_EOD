@@ -5,7 +5,25 @@ set -e
 export GO_PORT=${GO_PORT:-8081}
 export PORT=${PORT:-8000}
 export GO_SERVICE_URL="http://127.0.0.1:${GO_PORT}"
-export INTERNAL_API_SECRET="${INTERNAL_API_SECRET:-clab-internal-secret-change-in-production-2026}"
+
+# Resolve INTERNAL_API_SECRET from environment or container .env.
+# If unset, generate an in-memory 256-bit cryptographic hash with low memory footprint.
+if [ -z "$INTERNAL_API_SECRET" ]; then
+    if [ -f "/app/.env" ]; then
+        INTERNAL_API_SECRET=$(grep -E '^INTERNAL_API_SECRET=' /app/.env | cut -d '=' -f2- | tr -d '"'\'' ')
+    fi
+fi
+
+if [ -z "$INTERNAL_API_SECRET" ]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+        export INTERNAL_API_SECRET=$(head -c 32 /dev/urandom | sha256sum | awk '{print $1}')
+    else
+        export INTERNAL_API_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+    fi
+    echo "[SECURITY] Generated ephemeral 256-bit INTERNAL_API_SECRET for container processes."
+else
+    export INTERNAL_API_SECRET
+fi
 
 echo "=========================================="
 echo " Starting Unified Deployment Container"

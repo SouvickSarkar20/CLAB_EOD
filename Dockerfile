@@ -44,8 +44,7 @@ RUN chmod +x /app/entrypoint.sh /app/go-server
 ENV PYTHONUNBUFFERED=1 \
     PORT=8000 \
     GO_PORT=8081 \
-    GO_SERVICE_URL=http://127.0.0.1:8081 \
-    INTERNAL_API_SECRET=clab-internal-secret-change-in-production-2026
+    GO_SERVICE_URL=http://127.0.0.1:8081
 
 EXPOSE 8000 8081
 

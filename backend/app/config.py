@@ -16,9 +16,9 @@ class Settings(BaseSettings):
     
     FRONTEND_URL: str = "http://localhost:5173"
     GO_SERVICE_URL: str = "http://localhost:8081"
-    INTERNAL_API_SECRET: str = "clab-internal-secret-change-in-production-2026"
+    INTERNAL_API_SECRET: str = ""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=(".env", "../.env"), env_file_encoding="utf-8", extra="ignore")
 
     @model_validator(mode="after")
     def validate_security(self):
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
             self.DATABASE_URL = "sqlite+aiosqlite:///./auth.db"
         if self.ENVIRONMENT.lower() in ["production", "prod"] and "default_secret_key" in self.SECRET_KEY:
             raise ValueError("SECRET_KEY must be configured securely in production environment!")
-        if self.ENVIRONMENT.lower() in ["production", "prod"] and "change-in-production" in self.INTERNAL_API_SECRET:
+        if self.ENVIRONMENT.lower() in ["production", "prod"] and (not self.INTERNAL_API_SECRET or "change-in-production" in self.INTERNAL_API_SECRET):
             raise ValueError("INTERNAL_API_SECRET must be configured securely in production environment!")
         return self
 

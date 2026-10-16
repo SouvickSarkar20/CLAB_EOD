@@ -17,28 +17,32 @@ type Config struct {
 	InternalSecret string
 }
 
-// loadDotEnv reads key=value pairs from .env if present and sets them in os.Environ
+// loadDotEnv reads key=value pairs from .env or ../.env if present and sets them in os.Environ
 func loadDotEnv() {
-	file, err := os.Open(".env")
-	if err != nil {
-		return // .env is optional in production if environment variables are injected directly
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+	paths := []string{".env", "../.env"}
+	for _, p := range paths {
+		file, err := os.Open(p)
+		if err != nil {
 			continue
 		}
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) == 2 {
-			k := strings.TrimSpace(parts[0])
-			v := strings.Trim(strings.TrimSpace(parts[1]), "\"'")
-			if os.Getenv(k) == "" {
-				_ = os.Setenv(k, v)
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				k := strings.TrimSpace(parts[0])
+				v := strings.Trim(strings.TrimSpace(parts[1]), "\"'")
+				if os.Getenv(k) == "" {
+					_ = os.Setenv(k, v)
+				}
 			}
 		}
+		return
 	}
 }
 
@@ -72,8 +76,7 @@ func Load() *Config {
 		internalSecret = os.Getenv("GO_SERVICE_SECRET")
 	}
 	if internalSecret == "" {
-		internalSecret = "clab-internal-secret-change-in-production-2026"
-		log.Println("[SECURITY NOTICE] INTERNAL_API_SECRET is not set; running with default internal secret. Configure INTERNAL_API_SECRET in production!")
+		log.Println("[SECURITY WARNING] INTERNAL_API_SECRET is not set in environment or .env file!")
 	}
 
 	return &Config{
