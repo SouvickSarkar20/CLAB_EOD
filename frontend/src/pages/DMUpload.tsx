@@ -21,6 +21,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 interface PreviewResponse {
   is_valid: boolean;
+  validation_message?: string;
   total_records: number;
   total_revenue: number;
   target_month: string;
@@ -35,6 +36,7 @@ interface PreviewResponse {
   category_mix: Array<{ category: string; count: number }>;
   sample_rows: any[];
   records: any[];
+  upload_token?: string;
 }
 
 export function DMUpload() {
@@ -117,6 +119,7 @@ export function DMUpload() {
     try {
       const res = await api.post('/api/dm/upload/commit', {
         records: previewData.records,
+        upload_token: previewData.upload_token,
       });
       setCommitSuccess(res.data.message || `Successfully committed ${res.data.inserted_count} records.`);
       
@@ -243,11 +246,15 @@ export function DMUpload() {
         <div className="space-y-6">
           {/* Identity & Match Validation Alert */}
           {!previewData.dm_matches && (
-            <div className="bg-amber-50 border border-amber-300 rounded-[8px] p-4 flex items-start space-x-3 text-amber-900">
-              <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div className="bg-red-50 border border-red-300 rounded-[8px] p-4 flex items-start space-x-3 text-red-900 animate-fadeIn">
+              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
               <div className="text-[13px]">
-                <span className="font-bold">Manager Identity Warning: </span>
-                The manager name in this file (<span className="font-mono font-bold text-amber-950">{previewData.dm_name_in_file}</span>) does not match your active account (<span className="font-mono font-bold text-amber-950">{previewData.dm_name_logged_in}</span>). Please confirm before committing.
+                <span className="font-bold">Manager Mismatch - Access Denied: </span>
+                {previewData.validation_message || (
+                  <>
+                    The manager name in this file (<span className="font-mono font-bold text-red-950">{previewData.dm_name_in_file}</span>) does not match your active account (<span className="font-mono font-bold text-red-950">{previewData.dm_name_logged_in}</span>). You are not permitted to commit records belonging to another District Manager.
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -257,8 +264,12 @@ export function DMUpload() {
             <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-[#E2E8F0] gap-4">
               <div>
                 <div className="flex items-center space-x-2">
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-[#1A3A8F]">
-                    Validation Passed
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                    previewData.is_valid && previewData.dm_matches
+                      ? "bg-blue-100 text-[#1A3A8F]"
+                      : "bg-red-100 text-red-700"
+                  }`}>
+                    {previewData.is_valid && previewData.dm_matches ? "Validation Passed" : "Validation Failed"}
                   </span>
                   <span className="text-[13px] text-[#64748B] font-mono">
                     {file?.name} ({(file ? file.size / 1024 : 0).toFixed(1)} KB)
@@ -282,8 +293,8 @@ export function DMUpload() {
                 <button
                   type="button"
                   onClick={handleCommit}
-                  disabled={isCommitting || !previewData.is_valid}
-                  className="flex items-center space-x-2 bg-[#1A3A8F] hover:bg-[#152e72] text-white px-5 py-2 rounded-[6px] text-[13px] font-semibold transition shadow-sm disabled:opacity-50"
+                  disabled={isCommitting || !previewData.is_valid || !previewData.dm_matches}
+                  className="flex items-center space-x-2 bg-[#1A3A8F] hover:bg-[#152e72] text-white px-5 py-2 rounded-[6px] text-[13px] font-semibold transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isCommitting ? (
                     <>

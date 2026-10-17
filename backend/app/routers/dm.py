@@ -2,14 +2,18 @@ import uuid
 import csv
 import io
 import collections
+import hmac
+import hashlib
+import time
 from datetime import date
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, Query, UploadFile, File, HTTPException, status, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.dependencies.db import get_db
 from app.dependencies.auth import require_dm
-from app.models import AdminUser
+from app.models import AdminUser, UserRole
 from app.schemas.daily import DailyRow, DailySummaryResponse, DailyBreakdownResponse
 from app.schemas.monthly import MonthlyRow
 from app.utils.pagination import PaginatedResponse, create_paginated_response
@@ -354,18 +358,46 @@ async def preview_eod_file(
         max_date = f"{max_date[0:4]}-{max_date[4:6]}-{max_date[6:8]}"
 
     dm_in_file = list(file_dms)[0] if file_dms else "Unknown"
-    dm_matches = (dm_in_file.lower() == current_dm.name.lower()) or (current_dm.role.value == "admin")
+    is_admin = (current_dm.role == UserRole.ADMIN or current_dm.role.value == "admin")
+
+    logged_in_name = (current_dm.name or "").strip().lower()
+    logged_in_dmid = (current_dm.dmid or "").strip().lower()
+
+    mismatched_dms = set()
+    if not is_admin:
+        for d in file_dms:
+            d_clean = d.strip().lower()
+            if d_clean and d_clean != logged_in_name and d_clean != logged_in_dmid:
+                mismatched_dms.add(d)
+
+    dm_matches = is_admin or (len(mismatched_dms) == 0)
+    is_valid = dm_matches
+
+    # Generate HMAC upload token to bind preview to commit
+    target_mth = records[0]["enroll_mth"] if records else ""
+    token_data = f"{current_dm.id}:{len(records)}:{round(total_rev, 2)}:{target_mth}:{int(time.time())}"
+    token_sig = hmac.new(settings.SECRET_KEY.encode(), token_data.encode(), hashlib.sha256).hexdigest()
+    upload_token = f"{token_data}:{token_sig}"
 
     category_mix = [
         {"category": k, "count": v}
         for k, v in sorted(category_counts.items(), key=lambda x: x[1], reverse=True)
     ]
 
+    validation_message = None
+    if not dm_matches:
+        mismatched_names = ", ".join(list(mismatched_dms)[:3])
+        validation_message = (
+            f"Access Denied: This file contains records for District Manager '{mismatched_names}', "
+            f"but you are logged in as '{current_dm.name}'. You are only permitted to upload records for your assigned district."
+        )
+
     return {
-        "is_valid": True,
+        "is_valid": is_valid,
+        "validation_message": validation_message,
         "total_records": len(records),
         "total_revenue": round(total_rev, 2),
-        "target_month": records[0]["enroll_mth"] if records else "N/A",
+        "target_month": target_mth or "N/A",
         "stations": sorted(list(stations)),
         "date_range": {"start": min_date, "end": max_date},
         "dm_name_in_file": dm_in_file,
@@ -373,7 +405,8 @@ async def preview_eod_file(
         "dm_matches": dm_matches,
         "category_mix": category_mix,
         "sample_rows": records[:25],
-        "records": records
+        "records": records,
+        "upload_token": upload_token
     }
 
 @router.post("/upload/commit")
@@ -383,6 +416,7 @@ async def commit_eod_file(
 ):
     """
     Commit pre-validated records to Azure SQL via Go microservice.
+    Enforces that regular DMs can only commit records belonging to their own assigned district.
     """
     records = payload.get("records", [])
     if not records:
@@ -390,6 +424,53 @@ async def commit_eod_file(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No records provided to commit."
         )
+
+    # Validate upload_token if provided
+    upload_token = payload.get("upload_token")
+    if upload_token:
+        try:
+            parts = upload_token.split(":")
+            if len(parts) == 6:
+                uid, rec_cnt, rev, mth, ts, sig = parts
+                expected_data = f"{uid}:{rec_cnt}:{rev}:{mth}:{ts}"
+                expected_sig = hmac.new(settings.SECRET_KEY.encode(), expected_data.encode(), hashlib.sha256).hexdigest()
+                if not hmac.compare_digest(sig, expected_sig):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid upload token signature."
+                    )
+                if time.time() - int(ts) > 7200:  # Token valid for 2 hours
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Upload preview session has expired. Please re-upload the file."
+                    )
+                if str(current_dm.id) != uid:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Upload token was issued to a different user session."
+                    )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Malformed upload token: {str(e)}"
+            )
+
+    # Enforce strict DM ownership across every record
+    is_admin = (current_dm.role == UserRole.ADMIN or current_dm.role.value == "admin")
+    if not is_admin:
+        logged_in_name = (current_dm.name or "").strip().lower()
+        logged_in_dmid = (current_dm.dmid or "").strip().lower()
+        for idx, rec in enumerate(records):
+            rec_dm = (rec.get("district_manager") or "").strip().lower()
+            if rec_dm and rec_dm != logged_in_name and rec_dm != logged_in_dmid:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Access Denied: Record at row {idx + 1} specifies District Manager '{rec.get('district_manager')}', but you are logged in as '{current_dm.name}'. You cannot commit records for another manager."
+                )
+            # Canonicalize to the authenticated DM's official name to prevent spoofing
+            rec["district_manager"] = current_dm.name
 
     try:
         res = await GoServiceClient.bulk_insert_records(records)
