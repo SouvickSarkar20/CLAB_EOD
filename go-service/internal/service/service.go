@@ -470,8 +470,11 @@ func (s *DataService) GetDailyLogs(ctx context.Context, month, dmName, district,
 	if page < 1 {
 		page = 1
 	}
-	if pageSize < 1 || pageSize > 100 {
+	if pageSize < 1 {
 		pageSize = 25
+	}
+	if pageSize > 50000 {
+		pageSize = 50000
 	}
 	offset := (page - 1) * pageSize
 
@@ -611,8 +614,11 @@ func (s *DataService) GetMonthlyRecords(ctx context.Context, month, dmName, dist
 	if page < 1 {
 		page = 1
 	}
-	if pageSize < 1 || pageSize > 200 {
+	if pageSize < 1 {
 		pageSize = 25
+	}
+	if pageSize > 50000 {
+		pageSize = 50000
 	}
 	offset := (page - 1) * pageSize
 

@@ -17,6 +17,7 @@ from app.models import (
 )
 from app.services.analytics_service import AnalyticsService
 from app.services.anomaly_service import AnomalyService
+from app.services.go_client import GoServiceClient
 
 class ExportService:
 
@@ -91,44 +92,80 @@ class ExportService:
         db: AsyncSession,
         month: Optional[int] = None,
         district_id: Optional[int] = None,
-        dm_id: Optional[uuid.UUID] = None,
+        dm_id: Optional[str] = None,
         station_id: Optional[str] = None,
         operator_code: Optional[str] = None,
         export_format: str = "xlsx"
     ) -> Response:
-        """Export Monthly summary records to XLSX/CSV."""
-        # Query monthly records (get up to 10,000 for export)
-        items, _ = await AnalyticsService.get_monthly_records(
-            db=db,
-            month=month,
-            district_id=district_id,
-            dm_id=dm_id,
-            station_id=station_id,
-            operator_code=operator_code,
-            page=1,
-            page_size=10000
-        )
-
+        """Export Monthly summary records to XLSX/CSV querying Azure SQL CLAB-EOD with fallback."""
         rows: List[Dict[str, Any]] = []
-        for m in items:
-            rows.append({
-                "Month (YYYYMM)": m.enroll_month,
-                "District Name": m.district_name or "N/A",
-                "DM Name": m.dm_name or "Unassigned",
-                "Station ID": m.station_id,
-                "Station Name": m.station_name or m.station_id,
-                "Operator Code": m.operator_code,
-                "Total Enrollment": m.total_enrollment,
-                "Total Amount (INR)": float(m.total_amount),
-                "BMU 100": m.bmu_100,
-                "DMU 50": m.dmu_50,
-                "MBU 0": m.mbu_0,
-                "MBU 100": m.mbu_100,
-                "NEW 0": m.new_0,
-                "BMU 125": m.bmu_125,
-                "DMU 75": m.dmu_75,
-                "MBU 125": m.mbu_125,
-            })
+
+        # 1. Primary: Query Azure SQL CLAB-EOD via Go microservice
+        month_str = str(month) if month else ""
+        dm_str = str(dm_id) if dm_id else None
+        try:
+            go_data = await GoServiceClient.get_monthly_records(
+                month=month_str,
+                dm=dm_str,
+                station_id=station_id,
+                operator_code=operator_code,
+                page=1,
+                page_size=50000
+            )
+            for m in go_data.get("items", []):
+                rows.append({
+                    "Month (YYYYMM)": m.get("enroll_month") or month_str or "All",
+                    "District Name": m.get("district") or "N/A",
+                    "DM Name": m.get("district_manager") or "Unassigned",
+                    "Station ID": m.get("station_id") or "N/A",
+                    "Station Name": m.get("station_name") or f"Station {m.get('station_id')}",
+                    "Operator Code": m.get("operator_code") or m.get("operator_name") or "N/A",
+                    "Total Enrollment": m.get("total_enrollment", 0),
+                    "Total Amount (INR)": float(m.get("total_amount", 0.0)),
+                    "BMU 100": m.get("bmu_100", 0),
+                    "DMU 50": m.get("dmu_50", 0),
+                    "MBU 0": m.get("mbu_0", 0),
+                    "MBU 100": m.get("mbu_100", 0),
+                    "NEW 0": m.get("new_0", 0),
+                    "BMU 125": m.get("bmu_125", 0),
+                    "DMU 75": m.get("dmu_75", 0),
+                    "MBU 125": m.get("mbu_125", 0),
+                })
+        except Exception as e:
+            import logging
+            logging.warning(f"[EXPORT_MONTHLY] Go service query failed, falling back to local DB: {e}")
+
+        # 2. Fallback to local SQLite if Go service returned no rows
+        if not rows:
+            items, _ = await AnalyticsService.get_monthly_records(
+                db=db,
+                month=month,
+                district_id=district_id,
+                dm_id=None,
+                station_id=station_id,
+                operator_code=operator_code,
+                page=1,
+                page_size=10000
+            )
+            for m in items:
+                rows.append({
+                    "Month (YYYYMM)": m.enroll_month,
+                    "District Name": m.district_name or "N/A",
+                    "DM Name": m.dm_name or "Unassigned",
+                    "Station ID": m.station_id,
+                    "Station Name": m.station_name or m.station_id,
+                    "Operator Code": m.operator_code,
+                    "Total Enrollment": m.total_enrollment,
+                    "Total Amount (INR)": float(m.total_amount),
+                    "BMU 100": m.bmu_100,
+                    "DMU 50": m.dmu_50,
+                    "MBU 0": m.mbu_0,
+                    "MBU 100": m.mbu_100,
+                    "NEW 0": m.new_0,
+                    "BMU 125": m.bmu_125,
+                    "DMU 75": m.dmu_75,
+                    "MBU 125": m.mbu_125,
+                })
 
         df = pd.DataFrame(rows)
         filename = f"monthly_summary_{month if month else 'all'}"
@@ -142,45 +179,83 @@ class ExportService:
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
         district_id: Optional[int] = None,
-        dm_id: Optional[uuid.UUID] = None,
+        dm_id: Optional[str] = None,
         station_id: Optional[str] = None,
         operator_code: Optional[str] = None,
         export_format: str = "xlsx"
     ) -> Response:
-        """Export Daily operational records to XLSX/CSV."""
-        items, _ = await AnalyticsService.get_daily_records(
-            db=db,
-            month=month,
-            start_date=start_date,
-            end_date=end_date,
-            district_id=district_id,
-            dm_id=dm_id,
-            station_id=station_id,
-            operator_code=operator_code,
-            page=1,
-            page_size=50000
-        )
-
+        """Export Daily operational records to XLSX/CSV querying Azure SQL CLAB-EOD with fallback."""
         rows: List[Dict[str, Any]] = []
-        for d in items:
-            rows.append({
-                "Enrollment Date": str(d.enroll_date),
-                "District Name": d.district_name or "N/A",
-                "DM Name": d.dm_name or "Unassigned",
-                "Station ID": d.station_id,
-                "Station Name": d.station_name or d.station_id,
-                "Operator Code": d.operator_code,
-                "Total Enrollment": d.total_enrollment,
-                "Total Amount (INR)": float(d.total_amount),
-                "BMU 100": d.bmu_100,
-                "DMU 50": d.dmu_50,
-                "MBU 0": d.mbu_0,
-                "MBU 100": d.mbu_100,
-                "NEW 0": d.new_0,
-                "BMU 125": d.bmu_125,
-                "DMU 75": d.dmu_75,
-                "MBU 125": d.mbu_125,
-            })
+
+        # 1. Primary: Query Azure SQL CLAB-EOD via Go microservice
+        month_str = str(month) if month else ""
+        dm_str = str(dm_id) if dm_id else None
+        date_str = str(start_date) if start_date else None
+        try:
+            go_data = await GoServiceClient.get_daily_logs(
+                month=month_str,
+                dm=dm_str,
+                station_id=station_id,
+                date=date_str,
+                page=1,
+                page_size=50000
+            )
+            for d in go_data.get("items", []):
+                rows.append({
+                    "Enrollment Date": str(d.get("enroll_date") or ""),
+                    "District Name": d.get("district") or "N/A",
+                    "DM Name": d.get("district_manager") or "Unassigned",
+                    "Station ID": d.get("station_id") or "N/A",
+                    "Station Name": f"Station {d.get('station_id')}",
+                    "Operator Code": d.get("operator_name") or "N/A",
+                    "Total Enrollment": d.get("total_enrollment", 0),
+                    "Total Amount (INR)": float(d.get("total_amount", 0.0)),
+                    "BMU 100": d.get("bmu_100", 0),
+                    "DMU 50": d.get("dmu_50", 0),
+                    "MBU 0": d.get("mbu_0", 0),
+                    "MBU 100": d.get("mbu_100", 0),
+                    "NEW 0": d.get("new_0", 0),
+                    "BMU 125": d.get("bmu_125", 0),
+                    "DMU 75": d.get("dmu_75", 0),
+                    "MBU 125": d.get("mbu_125", 0),
+                })
+        except Exception as e:
+            import logging
+            logging.warning(f"[EXPORT_DAILY] Go service query failed, falling back to local DB: {e}")
+
+        # 2. Fallback to local SQLite if Go service returned no rows
+        if not rows:
+            items, _ = await AnalyticsService.get_daily_records(
+                db=db,
+                month=month,
+                start_date=start_date,
+                end_date=end_date,
+                district_id=district_id,
+                dm_id=None,
+                station_id=station_id,
+                operator_code=operator_code,
+                page=1,
+                page_size=50000
+            )
+            for d in items:
+                rows.append({
+                    "Enrollment Date": str(d.enroll_date),
+                    "District Name": d.district_name or "N/A",
+                    "DM Name": d.dm_name or "Unassigned",
+                    "Station ID": d.station_id,
+                    "Station Name": d.station_name or d.station_id,
+                    "Operator Code": d.operator_code,
+                    "Total Enrollment": d.total_enrollment,
+                    "Total Amount (INR)": float(d.total_amount),
+                    "BMU 100": d.bmu_100,
+                    "DMU 50": d.dmu_50,
+                    "MBU 0": d.mbu_0,
+                    "MBU 100": d.mbu_100,
+                    "NEW 0": d.new_0,
+                    "BMU 125": d.bmu_125,
+                    "DMU 75": d.dmu_75,
+                    "MBU 125": d.mbu_125,
+                })
 
         df = pd.DataFrame(rows)
         filename = f"daily_records_{month if month else 'period'}"

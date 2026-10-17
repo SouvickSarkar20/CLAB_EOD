@@ -120,6 +120,9 @@ func (h *APIHandler) GetDailyLogs(w http.ResponseWriter, r *http.Request) {
 	if pageSize < 1 {
 		pageSize = 25
 	}
+	if pageSize > 50000 {
+		pageSize = 50000
+	}
 
 	logs, err := h.svc.GetDailyLogs(r.Context(), month, dm, district, station, enrollDT, page, pageSize)
 	if err != nil {
@@ -148,8 +151,11 @@ func (h *APIHandler) GetMonthlyRecords(w http.ResponseWriter, r *http.Request) {
 		page = 1
 	}
 	pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
-	if pageSize < 1 || pageSize > 200 {
+	if pageSize < 1 {
 		pageSize = 25
+	}
+	if pageSize > 50000 {
+		pageSize = 50000
 	}
 
 	records, err := h.svc.GetMonthlyRecords(r.Context(), month, dm, district, stationID, operatorCode, page, pageSize)

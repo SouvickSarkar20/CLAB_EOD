@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.db import get_db
 from app.dependencies.auth import require_mfa
-from app.models import AdminUser
+from app.models import AdminUser, UserRole
 from app.services.analytics_service import AnalyticsService
 from app.services.export_service import ExportService
 
@@ -21,15 +21,16 @@ async def export_monthly(
     operator_code: Optional[str] = Query(None, description="Filter by Operator Code"),
     format: str = Query("xlsx", pattern="^(xlsx|csv)$", description="File format: xlsx | csv"),
     db: AsyncSession = Depends(get_db),
-    _: AdminUser = Depends(require_mfa)
+    current_user: AdminUser = Depends(require_mfa)
 ) -> Response:
     """Export Monthly Summary Report in Excel (.xlsx) or CSV format."""
-    resolved_dm_uuid = await AnalyticsService.resolve_dm_uuid(db, dm_id)
+    is_admin = (current_user.role == UserRole.ADMIN or current_user.role.value == "admin")
+    effective_dm = dm_id if is_admin else current_user.name
     return await ExportService.export_monthly(
         db=db,
         month=month,
         district_id=district_id,
-        dm_id=resolved_dm_uuid,
+        dm_id=effective_dm,
         station_id=station_id,
         operator_code=operator_code,
         export_format=format
@@ -46,17 +47,18 @@ async def export_daily(
     operator_code: Optional[str] = Query(None, description="Filter by Operator Code"),
     format: str = Query("xlsx", pattern="^(xlsx|csv)$", description="File format: xlsx | csv"),
     db: AsyncSession = Depends(get_db),
-    _: AdminUser = Depends(require_mfa)
+    current_user: AdminUser = Depends(require_mfa)
 ) -> Response:
     """Export Daily Operational Log Report in Excel (.xlsx) or CSV format."""
-    resolved_dm_uuid = await AnalyticsService.resolve_dm_uuid(db, dm_id)
+    is_admin = (current_user.role == UserRole.ADMIN or current_user.role.value == "admin")
+    effective_dm = dm_id if is_admin else current_user.name
     return await ExportService.export_daily(
         db=db,
         month=month,
         start_date=start_date,
         end_date=end_date,
         district_id=district_id,
-        dm_id=resolved_dm_uuid,
+        dm_id=effective_dm,
         station_id=station_id,
         operator_code=operator_code,
         export_format=format
