@@ -1,11 +1,20 @@
 import uuid
 from typing import Optional, Dict, Any
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 from app.models.user import UserRole, UserStatus
+from app.utils.security import validate_password_strength
 
 class LoginRequest(BaseModel):
-    email: str = Field(..., description="Email or DMID")
-    password: str = Field(..., min_length=1)
+    email: str = Field(..., min_length=1, max_length=150, description="Email or DMID")
+    password: str = Field(..., min_length=1, max_length=100, description="Password (up to 100 characters)")
+
+    @field_validator("password")
+    @classmethod
+    def sanitize_login_password(cls, v: str) -> str:
+        for ch in v:
+            if ord(ch) < 32 or ord(ch) == 127:
+                raise ValueError("Password cannot contain control characters or newlines")
+        return v
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -34,12 +43,22 @@ class UpdateProfileRequest(BaseModel):
 
 class UpdateCredentialsRequest(BaseModel):
     new_email: EmailStr
-    new_password: str = Field(..., min_length=8, description="New strong password (min 8 characters)")
+    new_password: str = Field(..., min_length=8, max_length=100, description="New strong password (8-100 characters)")
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_pwd(cls, v: str) -> str:
+        return validate_password_strength(v)
 
 class ChangePasswordRequest(BaseModel):
-    current_password: Optional[str] = None
-    old_password: Optional[str] = None
-    new_password: str = Field(..., min_length=8, description="New strong password")
+    current_password: Optional[str] = Field(None, max_length=100)
+    old_password: Optional[str] = Field(None, max_length=100)
+    new_password: str = Field(..., min_length=8, max_length=100, description="New strong password (8-100 characters)")
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_pwd(cls, v: str) -> str:
+        return validate_password_strength(v)
 
 class MFAEnrollResponse(BaseModel):
     secret: str

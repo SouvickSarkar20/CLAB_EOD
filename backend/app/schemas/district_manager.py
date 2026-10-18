@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 from app.models.user import UserStatus
+from app.utils.security import validate_password_strength
 
 class DMStationAssignmentSchema(BaseModel):
     station_id: str
@@ -55,7 +56,19 @@ class UpdateDMRequest(BaseModel):
     
 
 class ResetPasswordRequest(BaseModel):
-    new_password: Optional[str] = Field(None, min_length=6, description="Custom password to set for the DM (auto-generated if omitted)")
+    new_password: Optional[str] = Field(
+        None,
+        min_length=8,
+        max_length=100,
+        description="Custom password to set for the DM (8-100 characters, auto-generated if omitted)"
+    )
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_custom_pwd(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        return validate_password_strength(v)
 
 class ResetPasswordResponse(BaseModel):
     dm_id: uuid.UUID

@@ -81,3 +81,23 @@ def validate_month_param(month: Optional[int]) -> Optional[int]:
             detail=f"Invalid month '{month}'. Month must be in YYYYMM format with valid month 01-12 (e.g., 202601)."
         )
     return month
+
+def validate_password_strength(password: str) -> str:
+    """
+    Validate password length, characters, and formatting:
+    - Must be between 8 and 100 characters.
+    - No leading or trailing whitespace.
+    - No control characters (\x00-\x1f, \x7f) or newlines.
+    """
+    if not password:
+        raise ValueError("Password cannot be empty")
+    if len(password) < 8:
+        raise ValueError("Password must be at least 8 characters long")
+    if len(password) > 100:
+        raise ValueError("Password cannot exceed 100 characters")
+    if password != password.strip():
+        raise ValueError("Password cannot begin or end with whitespace")
+    for ch in password:
+        if ord(ch) < 32 or ord(ch) == 127:
+            raise ValueError("Password cannot contain control characters or newlines")
+    return password
