@@ -102,6 +102,7 @@ func main() {
 	mux.HandleFunc("/api/admin/assign-stations", h.AssignStations)
 	mux.HandleFunc("/api/dm/stations", h.GetDMStations)
 	mux.HandleFunc("/api/auth/update-password", h.UpdatePassword)
+	mux.HandleFunc("/api/filters/invalidate-cache", h.InvalidateFilterCache)
 
 	server := &http.Server{
 		Addr:         ":" + cfg.ServerPort,

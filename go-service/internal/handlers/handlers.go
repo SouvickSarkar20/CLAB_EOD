@@ -259,5 +259,19 @@ func (h *APIHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// InvalidateFilterCache handles clearing the filter cache
+func (h *APIHandler) InvalidateFilterCache(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	h.svc.InvalidateFilterCache()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "Filter options cache successfully invalidated",
+	})
+}
+
 
 

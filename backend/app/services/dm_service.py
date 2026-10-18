@@ -307,6 +307,12 @@ class DMService:
         db.add(log)
         await db.commit()
 
+        try:
+            await GoServiceClient.invalidate_filter_cache()
+        except Exception as e:
+            import logging
+            logging.warning(f"[CREATE_DM] Failed to invalidate filter cache: {e}")
+
         detail = await DMService.get_dm_detail(db, new_dm.id)
         return detail, temp_password
 
@@ -379,6 +385,12 @@ class DMService:
             db.add(log)
             await db.commit()
 
+            try:
+                await GoServiceClient.invalidate_filter_cache()
+            except Exception as e:
+                import logging
+                logging.warning(f"[UPDATE_DM] Failed to invalidate filter cache: {e}")
+
         return await DMService.get_dm_detail(db, dm.id)
 
     @staticmethod
@@ -406,6 +418,13 @@ class DMService:
         )
         db.add(log)
         await db.commit()
+
+        try:
+            await GoServiceClient.invalidate_filter_cache()
+        except Exception as e:
+            import logging
+            logging.warning(f"[DEACTIVATE_DM] Failed to invalidate filter cache: {e}")
+
         return True
 
     @staticmethod

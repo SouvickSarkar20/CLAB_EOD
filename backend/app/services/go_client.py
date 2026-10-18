@@ -209,6 +209,14 @@ class GoServiceClient:
         resp.raise_for_status()
         return resp.json()
 
+    @classmethod
+    async def invalidate_filter_cache(cls) -> Dict[str, Any]:
+        """Invalidate the in-memory filter options cache in the Go microservice."""
+        client = cls.get_client()
+        resp = await client.post("/api/filters/invalidate-cache")
+        resp.raise_for_status()
+        return resp.json()
+
 
 
 

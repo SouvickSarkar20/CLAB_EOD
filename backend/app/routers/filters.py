@@ -63,3 +63,23 @@ async def get_filter_options(
             status_code=503,
             detail="The core database engine is temporarily unavailable. Please try again shortly."
         )
+
+
+@router.post("/invalidate-cache")
+async def invalidate_filter_cache(
+    current_user: AdminUser = Depends(get_current_user)
+):
+    """
+    Invalidate the Go microservice filter cache to force a fresh query from Azure SQL.
+    """
+    try:
+        res = await GoServiceClient.invalidate_filter_cache()
+        return res
+    except Exception as e:
+        import logging
+        logging.error(f"[FILTERS] Error invalidating filter cache: {e}", exc_info=True)
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=503,
+            detail="Failed to invalidate filter cache in core engine."
+        )

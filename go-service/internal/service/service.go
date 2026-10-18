@@ -234,6 +234,13 @@ func (s *DataService) GetFilterOptions(ctx context.Context, dmName string) (*mod
 	return opts, nil
 }
 
+// InvalidateFilterCache clears all cached filter options to force a fresh query against Azure SQL
+func (s *DataService) InvalidateFilterCache() {
+	globalFilterCache.mu.Lock()
+	globalFilterCache.entries = make(map[string]filterCacheEntry)
+	globalFilterCache.mu.Unlock()
+}
+
 
 // ----------------- DM OVERVIEW & ANALYTICS -----------------
 
@@ -1109,9 +1116,7 @@ func (s *DataService) BulkInsertRecords(ctx context.Context, records []models.Ra
 	}
 
 	// Invalidate filter cache so dropdowns and statistics immediately reflect newly inserted month/data
-	globalFilterCache.mu.Lock()
-	globalFilterCache.entries = make(map[string]filterCacheEntry)
-	globalFilterCache.mu.Unlock()
+	s.InvalidateFilterCache()
 
 	return &models.BulkInsertResponse{
 		Success:       true,
@@ -1188,9 +1193,7 @@ func (s *DataService) AssignStations(ctx context.Context, dmIdentifier string, s
 	}
 
 	// Invalidate filter cache so dropdowns and overviews immediately reflect the new assignments
-	globalFilterCache.mu.Lock()
-	globalFilterCache.entries = make(map[string]filterCacheEntry)
-	globalFilterCache.mu.Unlock()
+	s.InvalidateFilterCache()
 
 	return &models.AssignStationsResponse{
 		Success:      true,
