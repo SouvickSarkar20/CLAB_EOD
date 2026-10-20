@@ -32,11 +32,14 @@ backend/test_e2e.py
 .idea/
 .DS_Store
 Thumbs.db
+*.db
 
-# Logs
+# Logs & temp files
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 rbac_plan.md
-dummy_september_2026.txt
+dummy_*.txt
+scripts/
+.vercel

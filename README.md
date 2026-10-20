@@ -1,197 +1,178 @@
-# Operations Analytics and Management Dashboard
+# Computer LAB EOD Operations & Analytics Portal
 
-An end-to-end, enterprise-grade Operations Analytics and Management Dashboard built for supervising enrollment and collection operations across districts, stations, and personnel.
+A high-performance enterprise analytics and operations supervision platform engineered to monitor, process, and analyze **1,500,000+ End-of-Day (EOD) Aadhaar enrollment records** across districts, stations, and field operators.
 
-## Tech Stack
+---
 
-### Backend
-- **Framework:** Python FastAPI (0.111+)
-- **Database ORM:** SQLAlchemy 2.0 (Async) with Alembic migrations
-- **Database:** PostgreSQL (Hosted on Supabase with PgBouncer connection pooler support)
-- **Authentication & Security:** JWT (Access & Refresh Tokens), Passlib (bcrypt), Supabase Auth native TOTP 2FA for Admin accounts
-- **Data Processing:** Pandas, OpenPyXL, XlsxWriter
+## System Architecture
 
-### Frontend
-- **Framework:** React 18/19 with TypeScript and Vite
-- **Styling:** Tailwind CSS with Lucide Icons
-- **State Management:** Zustand (Client Auth State) and TanStack React Query v5 (Server Data Cache)
-- **Routing:** React Router v6
-- **Data Visualization:** Recharts
-- **Security:** `@supabase/supabase-js` for TOTP 2FA enrollment and verification
+The application adopts a **BFF (Backend-for-Frontend) + High-Performance Microservice** architecture:
+
+```
++--------------------------------+        +--------------------------------------------------+
+|        Frontend (Vercel)       |        |              Unified Container (Render)          |
+|   React 18 + Vite + Tailwind   |        |                                                  |
+|   TanStack Query + Recharts    |------->|  FastAPI (Python) Gateway  [Port: 8000]          |
++--------------------------------+  HTTP  |           |                                      |
+                                          |           v (Keep-Alive Pool < 2ms)              |
+                                          |  Go Core Engine (sqlserver) [Port: 8081]         |
+                                          +--------------------+-----------------------------+
+                                                               | TLS / NOLOCK
+                                                               v
+                                                  +--------------------------+
+                                                  |    Azure SQL Database    |
+                                                  |  EODFiles (1.5M+ rows)   |
+                                                  |  WorkingKIT (Stations)   |
+                                                  |  EODDB_Users (Auth)      |
+                                                  +--------------------------+
+```
+
+1. **Frontend (Vercel)**: React 18 SPA with Vite, Tailwind CSS, TanStack React Query, Lucide icons, and Recharts.
+2. **Gateway Layer (FastAPI)**: JWT authentication, role enforcement (Admin vs. District Manager), request validation, and lightweight local session caching.
+3. **Core Data Engine (Go Microservice)**: Compiled static binary communicating with Azure SQL Server over connection pools with in-memory caching and non-blocking `WITH (NOLOCK)` queries.
+4. **Data Layer (Azure SQL Server)**: Houses `EODFiles`, `EOD_202607`, `WorkingKIT`, and `EODDB_Users`.
+
+---
+
+## Live Deployments
+
+- **Frontend Application**: https://clab-eod.vercel.app
+- **Backend API & Data Engine**: https://clab-eod.onrender.com
+- **API Health Check**: https://clab-eod.onrender.com/api/health
+- **Interactive API Documentation**: https://clab-eod.onrender.com/docs
+
+---
+
+## Demo Credentials
+
+| Role | Username / ID | Password | Access Scope |
+| :--- | :--- | :--- | :--- |
+| **System Administrator** | `ADMIN` *(or `admin@eod.internal`)* | `Admin@123456` | Full statewide overview, station assignment, user auditing, and cross-district analytics |
+| **District Manager (Cuttack)** | `DM02` | `utkl02` | Scoped to Utkal Keshari Nayak's assigned stations & EOD uploads |
+| **District Manager (Khurda)** | `DM01` | `abhi01` | Scoped to Abhimanyu Das's assigned stations |
+| **District Manager (Puri)** | `DM03` | `sand03` | Scoped to Sandeep Jena's assigned stations |
 
 ---
 
 ## Key Features
 
-- **Executive Analytics:** High-level operational summaries, collection metrics, daily breakdown, and performance KPIs.
-- **District and Station Supervision:** Hierarchical management across districts, stations, and District Managers (DMs).
-- **Data Export & Reporting:** Export operational records and summary reports to Excel and CSV formats.
-- **Role-Based Access Control:** Secure JWT authentication supporting Admin and DM roles.
-- **Multi-Factor Authentication (2FA):** Native TOTP 2FA enrollment for Admin users using Authenticator apps via Supabase Auth.
-- **PgBouncer Compatibility:** Built-in asyncpg configuration disabling prepared statement caching for pooled PostgreSQL environments.
+### 1. Executive Operations Overview
+- **Real-Time KPIs**: Total statewide enrollment volume, revenue collections, active field days, and operator metrics.
+- **Visual Analytics**: Interactive daily enrollment trends, fee category mix (`BMU @ 100`, `BMU @ 125`, `DMU @ 75`, `MBU @ 0`, `NEW @ 0`), and top-performing stations.
+- **Period-Aware Cascading Filters**: Filter seamlessly across enrollment months (2023–2026), districts, and district managers.
 
----
+### 2. District Manager Management & Station Reassignment
+- Dynamic assignment of field kits (`WorkingKIT`) to District Managers with real-time updates directly in Azure SQL.
+- Interactive station selector with pre-selected state tracking and instant search.
 
-## Repository Structure
+### 3. Monthly & Daily Station Rollups
+- Paginated table rollups grouping production by Station ID, Date, and Field Operator.
+- Fast sub-second response times on 1.5M+ rows using non-blocking dirty read semantics (`WITH (NOLOCK)`) and targeted indexing (`IX_EODFiles_EnrollMth`, `IX_EODFiles_EnrollMth_DM`).
 
-```
-.
-├── backend/
-│   ├── alembic/              # Alembic database migration scripts
-│   ├── app/
-│   │   ├── config.py         # Application settings and environment validation
-│   │   ├── database.py       # Async SQLAlchemy engine and session factory
-│   │   ├── main.py           # FastAPI application entrypoint and middleware
-│   │   ├── dependencies/     # Dependency injection (authentication, db sessions)
-│   │   ├── models/           # SQLAlchemy ORM models
-│   │   ├── routers/          # API endpoints (Auth, Analytics, DMs, Exports)
-│   │   ├── schemas/          # Pydantic data validation schemas
-│   │   ├── services/         # Core business logic layer
-│   │   └── utils/            # Security utilities and helpers
-│   ├── scripts/              # Data seeding and maintenance scripts
-│   ├── tests/                # Test suite (pytest with async engine override)
-│   ├── Dockerfile            # Container build specification
-│   └── requirements.txt      # Python dependencies
-│
-└── frontend/
-    ├── src/
-    │   ├── api/              # Axios HTTP client and API functions
-    │   ├── components/       # Shared UI components, tables, and charts
-    │   ├── lib/              # Supabase client and utility helpers
-    │   ├── pages/            # Application pages (Overview, Daily, Monthly, Settings, etc.)
-    │   ├── store/            # Zustand state management
-    │   └── types/            # TypeScript interface definitions
-    ├── package.json          # Frontend dependencies and scripts
-    └── vite.config.ts        # Vite configuration
-```
+### 4. Daily EOD File Processing & Preview
+- Multi-file and drag-and-drop CSV upload for field operators with client-side batching and preview tables.
+- Transactional bulk insertion into Azure SQL with filter cache invalidation.
 
 ---
 
 ## Local Development Setup
 
 ### Prerequisites
-- Python 3.10 or higher
-- Node.js 18 or higher and npm
-- PostgreSQL database instance (or Supabase project URI)
+- Node.js 18+ and npm
+- Go 1.22+
+- Python 3.10+
+- Azure SQL Database credentials
 
----
-
-### Backend Setup
-
-1. Navigate to the backend directory:
-   ```bash
-   cd backend
-   ```
-
-2. Create and activate a Python virtual environment:
-   - On Windows:
-     ```bash
-     python -m venv venv
-     venv\Scripts\activate
-     ```
-   - On Linux / macOS:
-     ```bash
-     python -m venv venv
-     source venv/bin/activate
-     ```
-
-3. Install required Python packages:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Create the environment configuration file:
-   ```bash
-   cp .env.example .env
-   ```
-   Update `.env` with your database credentials and secret key.
-
-5. Run database migrations:
-   ```bash
-   alembic upgrade head
-   ```
-
-6. Start the development server:
-   ```bash
-   uvicorn app.main:app --reload
-   ```
-   The backend API will be available at `http://localhost:8000` with interactive API documentation at `http://localhost:8000/docs`.
-
----
-
-### Frontend Setup
-
-1. Navigate to the frontend directory:
-   ```bash
-   cd frontend
-   ```
-
-2. Install Node.js dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Create the frontend environment configuration file:
-   ```bash
-   cp .env.example .env
-   ```
-   Configure `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` as needed.
-
-4. Start the frontend development server:
-   ```bash
-   npm run dev
-   ```
-   The frontend will be available at `http://localhost:5173`.
-
----
-
-## Environment Variables Reference
-
-### Backend (`backend/.env`)
-
-| Variable | Description |
-|---|---|
-| `DATABASE_URL` | PostgreSQL connection string (asyncpg format, e.g., `postgresql+asyncpg://...`) |
-| `SECRET_KEY` | Secret key used for signing JWT tokens |
-| `ALGORITHM` | JWT signing algorithm (Default: `HS256`) |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | Access token lifespan in minutes (Default: `30`) |
-| `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh token lifespan in days (Default: `7`) |
-| `SUPABASE_URL` | Supabase project URL for Admin 2FA integration |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key for admin-level authentication operations |
-| `FRONTEND_URL` | Frontend origin URL for CORS configuration |
-
-### Frontend (`frontend/.env`)
-
-| Variable | Description |
-|---|---|
-| `VITE_SUPABASE_URL` | Supabase project URL for frontend client |
-| `VITE_SUPABASE_ANON_KEY` | Supabase anonymous API key |
-
----
-
-## Database Connection Pooling Configuration
-
-When deploying the application with PostgreSQL connection poolers (such as Supabase Shared or Session Pooler powered by PgBouncer), asyncpg prepared statements can cause `InvalidSQLStatementNameError` exceptions.
-
-The application handles this automatically in `app/database.py` by setting:
-```python
-connect_args["statement_cache_size"] = 0
+### 1. Clone Repository
+```bash
+git clone https://github.com/SouvickSarkar20/CLAB_EOD.git
+cd CLAB_EOD
 ```
-This ensures compatibility across pooled and serverless deployment environments without requiring dedicated database connections.
 
----
+### 2. Configure Environment Variables
 
-## Testing
+**Backend (`backend/.env`):**
+```ini
+ENVIRONMENT=development
+PORT=8000
+GO_SERVICE_URL=http://localhost:8081
+SECRET_KEY=your_secure_random_jwt_secret_key_here
+FRONTEND_URL=http://localhost:5173
+```
 
-Run the automated backend test suite using pytest:
+**Go Microservice (`go-service/.env`):**
+```ini
+PORT=8081
+AZURE_SQL_SERVER=eod-db.database.windows.net
+AZURE_SQL_PORT=1433
+AZURE_SQL_DATABASE=EOD_1509250818am
+AZURE_SQL_USER=Clab_EOD
+AZURE_SQL_PASSWORD=csv@1040
+```
 
+**Frontend (`frontend/.env`):**
+```ini
+VITE_API_URL=http://localhost:8000
+```
+
+### 3. Run Locally
+
+**Terminal 1 — Go Microservice:**
+```bash
+cd go-service
+go run cmd/server/main.go
+```
+
+**Terminal 2 — FastAPI Backend:**
 ```bash
 cd backend
-pytest
+python -m venv venv
+# On Windows:
+.\venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
+
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
 ```
+
+**Terminal 3 — Frontend:**
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open your browser at `http://localhost:5173`.
 
 ---
 
-## License
+## Production Deployment Guide
 
-This project is licensed under the MIT License.
+### Backend on Render (Unified Docker Container)
+The backend uses a multi-stage `Dockerfile`:
+- Stage 1 compiles the Go binary statically (`CGO_ENABLED=0`).
+- Stage 2 installs Python dependencies and uses `entrypoint.sh` to run the Go engine on `8081` in the background and FastAPI on `$PORT` in the foreground with `--access-log`.
+
+**Render Environment Variables:**
+- `FRONTEND_URL`: `https://clab-eod.vercel.app`
+- `SECRET_KEY`: `<your-jwt-secret>`
+- `AZURE_SQL_SERVER`: `eod-db.database.windows.net`
+- `AZURE_SQL_PORT`: `1433`
+- `AZURE_SQL_DATABASE`: `EOD_1509250818am`
+- `AZURE_SQL_USER`: `Clab_EOD`
+- `AZURE_SQL_PASSWORD`: `csv@1040`
+
+### Frontend on Vercel
+- Root Directory: `frontend`
+- Build Command: `npm run build`
+- Output Directory: `dist`
+- Environment Variable: `VITE_API_URL=https://clab-eod.onrender.com`
+
+---
+
+## Security & Data Integrity
+- Passwords verified against Azure SQL `EODDB_Users`.
+- Standard JWT Bearer tokens with role-based access control (`admin` vs. `district_manager`).
+- CORS strictly restricted to production domain `https://clab-eod.vercel.app` and local dev hosts.
+- Non-blocking read locks (`WITH (NOLOCK)`) prevent deadlocks during high-volume production operations.

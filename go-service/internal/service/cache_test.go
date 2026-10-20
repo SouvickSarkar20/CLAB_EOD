@@ -37,3 +37,4 @@ func TestInvalidateFilterCache(t *testing.T) {
 	}
 	globalFilterCache.mu.RUnlock()
 }
+
